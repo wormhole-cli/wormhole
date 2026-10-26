@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { Event } from '../model/thread.js';
 import { atomicWrite } from '../store/store.js';
 import { cliVersion, readJsonlFrom, toJsonl } from './jsonl.js';
-import { CONTINUED, keep, toTurns, type Turn } from './render.js';
+import { CONTINUED, toTurns, type Turn } from './render.js';
 import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.js';
 
 /** User-role messages Codex injects itself; not things the person typed. */
@@ -99,7 +99,7 @@ export class CodexAdapter implements ToolAdapter {
           const callId = p.call_id ?? p.id;
           if (!callId) break;
           const input = callInput(p);
-          events.push({ kind: 'tool_call', callId, name: p.name ?? 'shell', inputSummary: keep(input), ts });
+          events.push({ kind: 'tool_call', callId, name: p.name ?? 'shell', inputSummary: input, ts });
           for (const change of patchChanges(input)) events.push({ ...change, ts });
           break;
         }
@@ -107,7 +107,7 @@ export class CodexAdapter implements ToolAdapter {
         case 'custom_tool_call_output': {
           if (!p.call_id) break;
           const { text, isError } = callOutput(p.output);
-          events.push({ kind: 'tool_result', callId: p.call_id, summary: keep(text), isError, ts });
+          events.push({ kind: 'tool_result', callId: p.call_id, summary: text, isError, ts });
           break;
         }
         // reasoning carries encrypted_content that only OpenAI can read: never carried over.

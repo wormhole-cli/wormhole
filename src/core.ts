@@ -2,6 +2,7 @@ import { promises as fs } from 'node:fs';
 import { ClaudeAdapter } from './adapters/claude.js';
 import { CodexAdapter } from './adapters/codex.js';
 import { OpencodeAdapter } from './adapters/opencode.js';
+import { KEEP_MAX, keep } from './adapters/render.js';
 import type { NativeRef, ToolAdapter } from './adapters/types.js';
 import { type BriefInput, buildBrief } from './handoff/brief.js';
 import { type GitInfo, gitInfo } from './handoff/git.js';
@@ -50,10 +51,34 @@ export interface SyncResult {
  * left alone so unrelated history does not leak in.
  */
 export async function sync(ctx: Context, opts: SyncOptions = {}): Promise<SyncResult> {
-  return ctx.store.transaction(ctx.cwd, (store) => syncUnlocked({ ...ctx, store }, opts));
+  return ctx.store.transaction(ctx.cwd, (store) => syncUnlocked({ ...ctx, store }, opts, ctx.store));
 }
 
-async function syncUnlocked(ctx: Context, opts: SyncOptions): Promise<SyncResult> {
+/**
+ * Cut tool text that is too long for the store and save it whole as an artifact.
+ * Artifacts go to `home`, the real store, not the transaction's staging copy: they
+ * are immutable and content-addressed, so writing them before the commit is safe.
+ */
+async function stash(home: Store, threadId: string, e: Event): Promise<Event> {
+  if (e.kind === 'tool_call' && e.inputSummary.length > KEEP_MAX) {
+    return { ...e, inputSummary: keep(e.inputSummary), artifact: await home.writeArtifact(threadId, e.inputSummary) };
+  }
+  if (e.kind === 'tool_result' && e.summary.length > KEEP_MAX) {
+    return { ...e, summary: keep(e.summary), artifact: await home.writeArtifact(threadId, e.summary) };
+  }
+  return e;
+}
+
+/** Events with artifact names swapped for absolute paths, for writing into a native session. */
+export function withArtifactPaths(home: Store, threadId: string, events: Event[]): Event[] {
+  return events.map((e) =>
+    (e.kind === 'tool_call' || e.kind === 'tool_result') && e.artifact
+      ? { ...e, artifact: home.artifactPath(threadId, e.artifact) }
+      : e,
+  );
+}
+
+async function syncUnlocked(ctx: Context, opts: SyncOptions, home: Store): Promise<SyncResult> {
   const thread = await ctx.store.loadOrCreateForCwd(ctx.cwd);
   const refs: NativeRef[] = [];
   for (const [tool, a] of Object.entries(ctx.adapters) as [Tool, ToolAdapter][]) {
@@ -79,10 +104,9 @@ async function syncUnlocked(ctx: Context, opts: SyncOptions): Promise<SyncResult
     if (!seg && ref !== active) continue;
     const { events, offset } = await adapter(ctx, ref.tool).read(ref, seg?.importedUpTo ?? 0);
     const src = srcKey(ref);
-    const start = await ctx.store.appendEvents(
-      thread.id,
-      events.map((e) => ({ ...e, src })),
-    );
+    const kept: Event[] = [];
+    for (const e of events) kept.push({ ...(await stash(home, thread.id, e)), src });
+    const start = await ctx.store.appendEvents(thread.id, kept);
     if (seg) {
       seg.importedUpTo = offset;
     } else {
@@ -150,16 +174,16 @@ export function missingFrom(seg: Segment, events: Event[]): Event[] | null {
  * otherwise a new session is synthesized from the whole thread.
  */
 export async function switchTo(ctx: Context, to: Tool, opts: SwitchOptions = {}): Promise<SwitchResult> {
-  return ctx.store.transaction(ctx.cwd, (store) => switchUnlocked({ ...ctx, store }, to, opts));
+  return ctx.store.transaction(ctx.cwd, (store) => switchUnlocked({ ...ctx, store }, to, opts, ctx.store));
 }
 
-async function switchUnlocked(ctx: Context, to: Tool, opts: SwitchOptions): Promise<SwitchResult> {
+async function switchUnlocked(ctx: Context, to: Tool, opts: SwitchOptions, home: Store): Promise<SwitchResult> {
   const target = adapter(ctx, to);
-  const { thread, active } = await sync(ctx, opts);
+  const { thread, active } = await syncUnlocked(ctx, opts, home);
   if (!active) throw new Error(`no Claude Code, Codex or opencode session found for ${ctx.cwd}`);
   if (active.tool === to) return { ref: active, mode: 'resumed', from: active };
 
-  const events = await ctx.store.readEvents(thread.id);
+  const events = withArtifactPaths(home, thread.id, await ctx.store.readEvents(thread.id));
   const last = thread.segments.findLast((s) => s.tool === to);
   const delta = last ? missingFrom(last, events) : null;
   const base = last && delta ? ((await target.locate(ctx.cwd, last.nativeId)) ?? undefined) : undefined;

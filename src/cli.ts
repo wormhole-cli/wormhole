@@ -294,6 +294,10 @@ function report({ ref, mode, from, base }: SwitchResult, to: Tool) {
   );
 }
 
+function full(artifact: string | undefined): string {
+  return artifact ? `  [full: artifacts/${artifact}]` : '';
+}
+
 function describe(e: Event): string {
   switch (e.kind) {
     case 'user_text':
@@ -301,9 +305,9 @@ function describe(e: Event): string {
     case 'assistant_text':
       return `assistant  ${oneLine(e.text, 100)}`;
     case 'tool_call':
-      return `call       ${e.name}: ${oneLine(e.inputSummary, 90)}`;
+      return `call       ${e.name}: ${oneLine(e.inputSummary, 90)}${full(e.artifact)}`;
     case 'tool_result':
-      return `${(e.isError ? 'error' : 'result').padEnd(11)}${oneLine(e.summary, 90)}`;
+      return `${(e.isError ? 'error' : 'result').padEnd(11)}${oneLine(e.summary, 90)}${full(e.artifact)}`;
     case 'file_change':
       return `file       ${e.op} ${e.path}`;
     case 'compact_summary':

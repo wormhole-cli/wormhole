@@ -119,6 +119,26 @@ export class Store {
     });
   }
 
+  /**
+   * Saves text in the thread's `artifacts/` directory and returns its file name.
+   * Content-addressed, so the same text is written once however often it is imported.
+   */
+  async writeArtifact(id: string, text: string): Promise<string> {
+    const name = `${createHash('sha256').update(text).digest('hex').slice(0, 32)}.txt`;
+    const file = this.artifactPath(id, name);
+    const exists = await fs.access(file).then(
+      () => true,
+      () => false,
+    );
+    // Tool output can hold secrets: owner-only, like the transcripts it came from.
+    if (!exists) await atomicWrite(file, text, 0o600);
+    return name;
+  }
+
+  artifactPath(id: string, name: string): string {
+    return path.join(this.threadDir(id), 'artifacts', name);
+  }
+
   private async withLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
     if (this.unlocked) return fn();
     const lockDir = path.join(this.threadDir(id), '.lock');

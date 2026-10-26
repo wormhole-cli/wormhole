@@ -2,6 +2,15 @@
 
 Notes on what each tool needs for wormhole to synthesize a resumable session. Verified 2026-10-26.
 
+## wormhole thread
+
+`~/.wormhole/threads/<id>/`: `thread.json` (segments), `events.jsonl` (one event per line, schema in
+`src/model/thread.ts`) and `artifacts/`. Adapters read tool text whole; `sync` cuts a `tool_call`
+`inputSummary` or `tool_result` `summary` over 4,000 chars to 4,000 plus `…[truncated N chars]`, writes
+the full text to `artifacts/<first 32 hex of sha256>.txt` and sets `artifact` to that file name.
+Artifacts are content-addressed and written once; events without `artifact` (older threads) are
+unchanged. When rendering into a native session the name becomes the absolute path.
+
 ## Codex (CLI 0.159.2)
 
 Rollout file: `$CODEX_HOME/sessions/YYYY/MM/DD/rollout-<local ts>-<uuidv7>.jsonl`, one JSON object per line.

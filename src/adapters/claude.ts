@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { Event } from '../model/thread.js';
 import { atomicWrite } from '../store/store.js';
 import { cliVersion, newestByMtime, readJsonlFrom, toJsonl } from './jsonl.js';
-import { CONTINUED, keep, toTurns, type Turn } from './render.js';
+import { CONTINUED, toTurns, type Turn } from './render.js';
 import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.js';
 
 /** Tools whose input names the file they change. */
@@ -91,7 +91,7 @@ export class ClaudeAdapter implements ToolAdapter {
             events.push({
               kind: 'tool_result',
               callId: block.tool_use_id,
-              summary: keep(blocksText(block.content)),
+              summary: blocksText(block.content),
               isError: block.is_error === true,
               ts,
             });
@@ -111,7 +111,7 @@ export class ClaudeAdapter implements ToolAdapter {
               kind: 'tool_call',
               callId: block.id,
               name: block.name,
-              inputSummary: keep(summarizeInput(block.input)),
+              inputSummary: summarizeInput(block.input),
               ts,
             });
             const op = FILE_TOOLS[block.name];

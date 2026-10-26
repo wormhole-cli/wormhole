@@ -63,12 +63,12 @@ export function toTurns(
         speak('user', `[Summary of earlier conversation]\n${e.text}`);
         break;
       case 'tool_call':
-        speak('assistant', `▸ ${e.name}: ${oneLine(e.inputSummary)}`);
+        speak('assistant', `▸ ${e.name}: ${oneLine(e.inputSummary)}${pointer('input', e.artifact)}`);
         pending.set(e.callId, lines.length - 1);
         break;
       case 'tool_result': {
         const at = pending.get(e.callId);
-        const result = `${e.isError ? 'error' : 'ok'}: ${summarizeOutput(e.summary)}`;
+        const result = `${e.isError ? 'error' : 'ok'}: ${summarizeOutput(e.summary)}${pointer('output', e.artifact)}`;
         if (at !== undefined && role === 'assistant') {
           lines[at] = `${lines[at]} → ${result}`;
           pending.delete(e.callId);
@@ -94,14 +94,22 @@ export function toTurns(
   return turns;
 }
 
+/** Tells the target model where the uncut text is; `artifact` is an absolute path by now. */
+function pointer(what: 'input' | 'output', artifact: string | undefined): string {
+  return artifact ? ` (full ${what}: ${artifact})` : '';
+}
+
 function push(turns: Turn[], role: Turn['role'], text: string) {
   const last = turns.at(-1);
   if (last && last.role === role) last.text = `${last.text}\n\n${text}`;
   else turns.push({ role, text });
 }
 
-/** Tool payloads kept in the thread store; rendering trims further. */
-const KEEP_MAX = 4000;
+/**
+ * Tool payloads kept in the thread store; rendering trims further. Longer text is
+ * cut here and saved in full as an artifact (see sync).
+ */
+export const KEEP_MAX = 4000;
 
 export function keep(text: string): string {
   return text.length > KEEP_MAX ? `${text.slice(0, KEEP_MAX)}…[truncated ${text.length - KEEP_MAX} chars]` : text;
