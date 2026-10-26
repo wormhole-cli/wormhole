@@ -2,6 +2,7 @@ import { Command, CommanderError, InvalidArgumentError, Option } from 'commander
 import { oneLine } from './adapters/render.js';
 import type { NativeRef } from './adapters/types.js';
 import { type Account, addAccount, loadAccounts, parseKey, removeAccount } from './accounts.js';
+import { type Check, failed, formatChecks, type Probes, runDoctor } from './doctor.js';
 import { adapter, type Context, defaultContext, makeBrief, refKey, type SwitchResult, switchTo, sync } from './core.js';
 import {
   importFromHook,
@@ -36,6 +37,8 @@ export interface Deps {
   readStdin: () => Promise<string>;
   /** Runs a tool headless for `--summarize`. */
   run: Runner;
+  /** Replaces what `doctor` probes. */
+  doctorProbes?: Probes;
 }
 
 const defaults: Deps = { context: defaultContext, launch, openUrl, readStdin, run: runCapture };
@@ -304,6 +307,17 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .action(async (key: string) => {
       const a = await removeAccount(key);
       console.log(`Removed ${a.tool}@${a.name}; ${a.dir} is untouched.`);
+    });
+
+  program
+    .command('doctor')
+    .description('Check tools, logins, hooks, accounts and the store; exits 1 if anything fails')
+    .option('--json', 'machine-readable output')
+    .action(async (opts: { json?: boolean }) => {
+      const checks: Check[] = await runDoctor(deps.doctorProbes);
+      if (opts.json) console.log(JSON.stringify({ ok: !failed(checks), checks }, null, 2));
+      else for (const line of formatChecks(checks)) console.log(line);
+      if (failed(checks)) state.exitCode = 1;
     });
 
   // Called by the tools themselves; argv after the tool is parsed by hand because

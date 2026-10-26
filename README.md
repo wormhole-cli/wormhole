@@ -11,7 +11,18 @@ wormhole log              # the thread, one line per event
 wormhole brief --to codex # the handoff note a switch would add
 wormhole import           # pull new turns without switching
 wormhole switch claude@work  # another Claude Code login (see Several accounts)
+wormhole doctor           # check tools, logins, hooks, accounts and the store
 ```
+
+`wormhole doctor` prints one pass/WARN/FAIL line per check, with a fix after `→` on each problem, and
+exits 1 if anything fails (warnings alone exit 0; `--json` for scripts). It only reads: tool versions
+(`--version`), logins (`claude auth status`, `codex login status` with each account's folder in the
+env; neither spends tokens), whether each folder's hook is installed and still points at an existing
+node and `wormhole.js` (a moved repo breaks them; rerun `hooks install`), whether Codex notify still
+chains the program from before wormhole, account folders (exist, not the default, no duplicates),
+and the store: writable, every `thread.json` loads, no leftover `pending.json` journal or `.lock`
+older than 30 s, and the last `hook.log` error if it is under 7 days old. A missing opencode is a
+warning.
 
 ### Keeping threads current
 
@@ -136,7 +147,6 @@ As of 2026-10-26 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
 **Ideas, not started**
 
 - When one account hits its usage limit, switch to another account automatically.
-- `wormhole doctor`: check hooks, logins and account folders in one go.
 
 ## Develop
 
