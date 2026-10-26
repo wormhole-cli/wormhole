@@ -144,13 +144,17 @@ As of 2026-10-26 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
 
 - Claude Code → Codex → Claude Code, both as a new session and as an extended copy; the resumed
   model answers from the imported history (`claude -p -r`, `codex exec resume`).
-- opencode round trip through `opencode export` / `import`.
+- opencode round trip through `opencode export` / `import`:
+ : Claude Code → opencode, which recalled the
+  Claude turns, → Claude Code, which knew what was said in opencode.
 - Desktop apps: Codex Desktop loads and resumes handed-off threads (`--app`, `codex://threads/<id>`),
   and its turns fire the notify hook; Claude Desktop imports a session from
   `claude://resume?session=<id>` and answers from it.
 - Pickers: handed-off sessions show up in `codex resume` and as the newest session for `claude -c`.
 - `--summarize` against real Claude Code and Codex sessions.
-- opencode auto-import: a real `opencode run` updated the thread through the plugin.
+- opencode auto-import: a real `opencode run` updated the thread through the plugin, with no
+  wormhole command run.
+- `--summarize` from opencode: the summary landed in the brief and the fork was deleted.
 - Accounts: Claude Code → `codex@alt` (a second `CODEX_HOME`) → Claude Code; Codex resumed it from
   the other folder and its turn came back.
 - Limit detection, against real session files: Claude Code 2.1.296–2.1.299 writes the
@@ -162,8 +166,6 @@ As of 2026-10-26 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
 
 - Moving between two Claude Code logins (`claude@work`). It needs a second logged-in folder; the open
   question is whether the other account accepts the copied session's thinking blocks.
-- `--summarize` from opencode, and handing back from opencode with turns made there: not yet
-  run with a working opencode model.
 - A Codex session at its limit: none has been captured yet, so
   the 100% / `rate_limit_reached_type` case and the `error` event fallback are built from the
   snapshot shape, not a captured limit. `wormhole next` and the auto hook were run against copies in
