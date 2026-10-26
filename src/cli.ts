@@ -2,11 +2,22 @@ import { Command, CommanderError, InvalidArgumentError, Option } from 'commander
 import { oneLine } from './adapters/render.js';
 import type { NativeRef } from './adapters/types.js';
 import { adapter, type Context, defaultContext, makeBrief, type SwitchResult, switchTo, sync } from './core.js';
-import { importFromHook, logHookError, parseClaudeHook, parseCodexNotify, readStdin, runChained, THEN } from './hooks/handle.js';
+import {
+  importFromHook,
+  logHookError,
+  parseClaudeHook,
+  parseCodexNotify,
+  parseOpencodeHook,
+  readStdin,
+  runChained,
+  THEN,
+} from './hooks/handle.js';
 import {
   claudeSettingsPath,
   codexConfigPath,
   install,
+  opencodeOnPath,
+  opencodePluginPath,
   status as hookStatus,
   type Target,
   uninstall,
@@ -177,18 +188,24 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
 
   const hooks = program.command('hooks').description('Keep threads up to date automatically');
 
-  function hookTargets(opts: { claude?: boolean; codex?: boolean }): Target[] {
-    const picked = (['claude', 'codex'] as const).filter((t) => opts[t]);
-    return picked.length > 0 ? [...picked] : ['claude', 'codex'];
+  type HookOpts = { claude?: boolean; codex?: boolean; opencode?: boolean };
+  const ALL_HOOKS: Target[] = ['claude', 'codex', 'opencode'];
+
+  /** Explicit flags win; otherwise every tool (install: opencode only when it is on PATH). */
+  async function hookTargets(opts: HookOpts, forInstall: boolean): Promise<Target[]> {
+    const picked = ALL_HOOKS.filter((t) => opts[t]);
+    if (picked.length > 0) return picked;
+    return forInstall && !(await opencodeOnPath()) ? ['claude', 'codex'] : ALL_HOOKS;
   }
 
   hooks
     .command('install')
-    .description('Import new turns when a Claude Code session ends and after each Codex turn')
+    .description('Import new turns when a Claude Code session ends and after each Codex or opencode turn')
     .option('--claude', 'only Claude Code')
     .option('--codex', 'only Codex')
-    .action(async (opts: { claude?: boolean; codex?: boolean }) => {
-      for (const line of await install(hookTargets(opts))) console.log(line);
+    .option('--opencode', 'only opencode (default: included when opencode is on PATH)')
+    .action(async (opts: HookOpts) => {
+      for (const line of await install(await hookTargets(opts, true))) console.log(line);
       console.log('Hooks only update projects that already have a wormhole thread.');
     });
 
@@ -197,8 +214,9 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .description('Remove the hooks; a wrapped Codex notify program is put back')
     .option('--claude', 'only Claude Code')
     .option('--codex', 'only Codex')
-    .action(async (opts: { claude?: boolean; codex?: boolean }) => {
-      const done = await uninstall(hookTargets(opts));
+    .option('--opencode', 'only opencode')
+    .action(async (opts: HookOpts) => {
+      const done = await uninstall(await hookTargets(opts, false));
       for (const line of done) console.log(line);
       if (done.length === 0) console.log('No wormhole hooks installed.');
     });
@@ -208,8 +226,8 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .description('Show which hooks are installed')
     .action(async () => {
       const s = await hookStatus();
-      console.log(`claude  ${s.claude ? 'installed' : 'not installed'}  (${claudeSettingsPath()})`);
-      console.log(`codex   ${s.codex ? 'installed' : 'not installed'}  (${codexConfigPath()})`);
+      const where = { claude: claudeSettingsPath(), codex: codexConfigPath(), opencode: opencodePluginPath() };
+      for (const t of ALL_HOOKS) console.log(`${t.padEnd(10)}${s[t] ? 'installed' : 'not installed'}  (${where[t]})`);
     });
 
   // Called by the tools themselves; argv after the tool is parsed by hand because
@@ -230,6 +248,9 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
           const then = rest[0] === THEN ? rest.slice(1, -1) : [];
           runChained(then, payload);
           const input = parseCodexNotify(payload);
+          if (input) await importFromHook(input, deps.context(input.cwd));
+        } else if (tool === 'opencode') {
+          const input = parseOpencodeHook(rest.at(-1));
           if (input) await importFromHook(input, deps.context(input.cwd));
         }
       } catch (err) {

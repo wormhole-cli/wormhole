@@ -86,5 +86,12 @@ every part.
 - Parts: `text`, `reasoning` (dropped), `tool {callID, tool, state{status, input, output, metadata.exit}}`,
   `step-start`/`step-finish`, `patch`, `compaction`. A compaction summary is an assistant message
   with `summary: true`, `mode: "compaction"`.
+- Plugins: every `{plugin,plugins}/*.{js,ts}` in the global config dir (`$XDG_CONFIG_HOME/opencode`) or
+  a project's `.opencode/` is loaded; its exports are `async (input) => hooks` with `input.directory`.
+  `hooks.event({event})` sees every bus event. Per turn (`opencode run`, verified 2026-10-26):
+  `session.created`/`session.updated` (`properties.info` = the session, `parentID` set for subagent
+  sessions), `session.status` busy → idle, then `session.idle {sessionID}` once the assistant message is
+  completed. wormhole's plugin reacts to `session.idle` and passes `{type, sessionID, cwd}` as the last
+  argument of `wormhole hook opencode`.
 - **Gotcha:** opencode exits before draining a stdout pipe, so `export` / `session list` output over
   8 KB arrives truncated. wormhole points stdout at a file instead.
