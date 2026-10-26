@@ -330,7 +330,7 @@ function summarizeInput(input: Record<string, unknown>): string {
 }
 
 async function readConfigModel(): Promise<string | undefined> {
-  const base = process.env.XDG_CONFIG_HOME ?? path.join(homedir(), '.config');
+  const base = process.env.XDG_CONFIG_HOME || path.join(homedir(), '.config');
   try {
     const config = JSON.parse(await fs.readFile(path.join(base, 'opencode', 'opencode.json'), 'utf8')) as { model?: string };
     return config.model;

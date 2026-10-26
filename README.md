@@ -12,6 +12,20 @@ wormhole brief --to codex # the handoff note a switch would add
 wormhole import           # pull new turns without switching
 ```
 
+### Keeping threads current
+
+```bash
+wormhole hooks install    # Claude Code SessionEnd hook + Codex notify
+wormhole hooks status
+wormhole hooks uninstall  # removes them; a wrapped Codex notify program is put back
+```
+
+The Claude hook goes into `settings.json` (`hooks.SessionEnd`), next to any hooks already there. Codex
+allows one top-level `notify` program, so wormhole wraps an existing one (`… hook codex --then <old
+argv>`) and still runs it, with the same payload, on every turn. The first install keeps a copy of each
+file as `*.before-wormhole`. Hooks only update projects that already have a thread, and log failures to
+`~/.wormhole/hook.log` instead of disturbing the tool.
+
 `wh` is a short alias. `-C <dir>` runs against another project directory; `--no-launch` writes the
 session and prints the resume command instead of opening it.
 

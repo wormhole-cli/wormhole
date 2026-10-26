@@ -9,7 +9,7 @@ const LOCK_RETRY_MS = 50;
 const LOCK_TIMEOUT_MS = 10_000;
 
 export function wormholeHome(): string {
-  return process.env.WORMHOLE_HOME ?? path.join(homedir(), '.wormhole');
+  return process.env.WORMHOLE_HOME || path.join(homedir(), '.wormhole');
 }
 
 /** Default thread id for a project directory: stable, so every tool finds the same thread. */

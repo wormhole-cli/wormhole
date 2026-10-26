@@ -36,7 +36,7 @@ export class CodexAdapter implements ToolAdapter {
   private readonly home: string;
 
   constructor(private readonly opts: CodexOptions = {}) {
-    this.home = opts.home ?? process.env.CODEX_HOME ?? path.join(homedir(), '.codex');
+    this.home = opts.home ?? (process.env.CODEX_HOME || path.join(homedir(), '.codex'));
   }
 
   /**

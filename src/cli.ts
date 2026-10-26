@@ -2,6 +2,15 @@ import { Command, InvalidArgumentError, Option } from 'commander';
 import { oneLine } from './adapters/render.js';
 import { adapter, type Context, defaultContext, makeBrief, type SwitchResult, switchTo, sync } from './core.js';
 import { launch, shellLine } from './launch.js';
+import { importFromHook, logHookError, parseClaudeHook, parseCodexNotify, readStdin, runChained, THEN } from './hooks/handle.js';
+import {
+  claudeSettingsPath,
+  codexConfigPath,
+  install,
+  status as hookStatus,
+  type Target,
+  uninstall,
+} from './hooks/install.js';
 import { activeSegment, type Event, TOOLS, Tool } from './model/thread.js';
 
 const program = new Command();
@@ -127,6 +136,68 @@ program
     const c = ctx();
     const { thread } = await sync(c);
     console.log(await makeBrief(c, thread, opts.to));
+  });
+
+const hooks = program.command('hooks').description('Keep threads up to date automatically');
+
+function hookTargets(opts: { claude?: boolean; codex?: boolean }): Target[] {
+  const picked = (['claude', 'codex'] as const).filter((t) => opts[t]);
+  return picked.length > 0 ? [...picked] : ['claude', 'codex'];
+}
+
+hooks
+  .command('install')
+  .description('Import new turns when a Claude Code session ends and after each Codex turn')
+  .option('--claude', 'only Claude Code')
+  .option('--codex', 'only Codex')
+  .action(async (opts: { claude?: boolean; codex?: boolean }) => {
+    for (const line of await install(hookTargets(opts))) console.log(line);
+    console.log('Hooks only update projects that already have a wormhole thread.');
+  });
+
+hooks
+  .command('uninstall')
+  .description('Remove the hooks; a wrapped Codex notify program is put back')
+  .option('--claude', 'only Claude Code')
+  .option('--codex', 'only Codex')
+  .action(async (opts: { claude?: boolean; codex?: boolean }) => {
+    const done = await uninstall(hookTargets(opts));
+    for (const line of done) console.log(line);
+    if (done.length === 0) console.log('No wormhole hooks installed.');
+  });
+
+hooks
+  .command('status')
+  .description('Show which hooks are installed')
+  .action(async () => {
+    const s = await hookStatus();
+    console.log(`claude  ${s.claude ? 'installed' : 'not installed'}  (${claudeSettingsPath()})`);
+    console.log(`codex   ${s.codex ? 'installed' : 'not installed'}  (${codexConfigPath()})`);
+  });
+
+// Called by the tools themselves; argv after the tool is parsed by hand because
+// Codex appends its JSON payload after any chained notify program.
+program
+  .command('hook', { hidden: true })
+  .argument('<tool>')
+  .allowUnknownOption()
+  .allowExcessArguments()
+  .action(async (tool: string) => {
+    const rest = process.argv.slice(process.argv.indexOf('hook') + 2);
+    try {
+      if (tool === 'claude') {
+        const input = parseClaudeHook(await readStdin());
+        if (input) await importFromHook(input);
+      } else if (tool === 'codex') {
+        const payload = rest.at(-1);
+        const then = rest[0] === THEN ? rest.slice(1, -1) : [];
+        runChained(then, payload);
+        const input = parseCodexNotify(payload);
+        if (input) await importFromHook(input);
+      }
+    } catch (err) {
+      await logHookError(err);
+    }
   });
 
 function report({ ref, mode, from, base }: SwitchResult, to: Tool) {

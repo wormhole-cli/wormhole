@@ -33,7 +33,7 @@ export class ClaudeAdapter implements ToolAdapter {
   private readonly configDir: string;
 
   constructor(private readonly opts: ClaudeOptions = {}) {
-    this.configDir = opts.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? path.join(homedir(), '.claude');
+    this.configDir = opts.configDir ?? (process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'));
   }
 
   projectDir(cwd: string): string {
