@@ -29,7 +29,7 @@
   "name": "wormhole",
   "alternateName": "agent-wormhole",
   "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "macOS, Linux",
+  "operatingSystem": "macOS, Linux, Windows",
   "description": "Move a coding session between Claude Code, Codex and opencode, and resume it on the other side.",
   "url": "https://ashutosh091.github.io/wormhole/",
   "downloadUrl": "https://www.npmjs.com/package/agent-wormhole",
@@ -319,7 +319,7 @@ last   <span class="k">claude</span> b6f29c20-a95b…
     <details><summary>Can it break my existing sessions?</summary><p>It never edits or deletes a native session. Switching back writes a copy under a new id; the original is untouched.</p></details>
     <details><summary>What about the model's reasoning?</summary><p>It is never copied across tools: Claude's signed thinking and Codex's encrypted reasoning only verify with their own provider. Text, tool calls and results carry over.</p></details>
     <details><summary>Is it the full tool output?</summary><p>Tool calls cross tools as one-line summaries. Output over 4,000 characters is cut in the thread and kept whole on disk, with a pointer the next agent can read.</p></details>
-    <details><summary>Which platforms?</summary><p>macOS and Linux with Node 22+. Desktop links use <code>open</code> or <code>xdg-open</code>.</p></details>
+    <details><summary>Which platforms?</summary><p>macOS (Apple silicon and Intel), Linux and Windows, with Node 22+. The test suite runs on all three on every change.</p></details>
   </div>
 </section>
 </main>

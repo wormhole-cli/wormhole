@@ -21,7 +21,7 @@ back later and Claude Code picks up its own session, with only the new turns fro
 ## Install
 
 ```bash
-npm i -g agent-wormhole   # Node 22+; installs the `wormhole` and `wh` commands
+npm i -g agent-wormhole   # Node 22+, macOS / Linux / Windows; installs `wormhole` and `wh`
 wormhole hooks install    # optional: keep threads up to date after every turn
 wormhole doctor           # check tools, logins and hooks
 ```
@@ -199,6 +199,10 @@ As of 2026-10-26 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
   count as not limited.
 
 **Not yet verified with the real tools** (unit-tested only)
+
+- Windows: the full test suite passes on Windows in CI (Node starts npm's `.cmd` shims through
+  cross-spawn, programs are found through `PATHEXT`, account launches print PowerShell), but no
+  real Claude Code / Codex / opencode session has been moved on a Windows machine yet.
 
 - Moving between two Claude Code logins (`claude@work`). It needs a second logged-in folder; the open
   question is whether the other account accepts the copied session's thinking blocks.

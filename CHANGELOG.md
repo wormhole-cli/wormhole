@@ -30,6 +30,7 @@ First release.
   the next account or tool with room, and opt-in automatic fallback from the hooks.
 - `wormhole doctor`: checks tools, logins, hooks, accounts and the store, with `--json`.
 - Crash-safe, incremental thread store with locking.
+- Runs on macOS, Linux and Windows; CI tests all three.
 
 [Unreleased]: https://github.com/ashutosh091/wormhole/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/ashutosh091/wormhole/releases/tag/v0.1.0
