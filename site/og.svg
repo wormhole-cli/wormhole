@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <radialGradient id="glow" cx="0.82" cy="0.3" r="0.6">
+      <stop offset="0" stop-color="#6d4aff" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#0d0b1a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="t" x1="0" x2="1">
+      <stop offset="0" stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="630" fill="#0d0b1a"/>
+  <rect width="1200" height="630" fill="url(#glow)"/>
+  <g transform="translate(1012 150) scale(0.85)" fill="none">
+    <circle r="120" stroke="#7c5cff" stroke-width="14" opacity="0.9"/>
+    <circle r="78" stroke="#22d3ee" stroke-width="14" opacity="0.9"/>
+    <circle r="38" stroke="#f472b6" stroke-width="12" opacity="0.9"/>
+    <circle r="10" fill="#f472b6"/>
+  </g>
+  <text x="80" y="140" fill="#c4b5fd" font-family="Menlo, monospace" font-size="30" font-weight="600" letter-spacing="3">WORMHOLE</text>
+  <text x="80" y="250" fill="#ece9fb" font-family="Helvetica, Arial, sans-serif" font-size="66" font-weight="700">Move a coding session</text>
+  <text x="80" y="330" fill="url(#t)" font-family="Helvetica, Arial, sans-serif" font-size="54" font-weight="700">Claude Code ⇄ Codex ⇄ opencode</text>
+  <text x="80" y="400" fill="#a49fc2" font-family="Helvetica, Arial, sans-serif" font-size="30">Real native sessions, a handoff brief, several logins. Local only.</text>
+  <rect x="80" y="460" width="560" height="74" rx="14" fill="#08070f" stroke="#3b2f7a" stroke-width="2"/>
+  <text x="108" y="508" fill="#8a85a8" font-family="Menlo, monospace" font-size="30">$</text>
+  <text x="138" y="508" fill="#e6e3f5" font-family="Menlo, monospace" font-size="30">wormhole switch codex</text>
+  <text x="1120" y="575" text-anchor="end" fill="#8a85a8" font-family="Menlo, monospace" font-size="24">npm i -g agent-wormhole</text>
+</svg>

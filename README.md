@@ -1,9 +1,43 @@
 # wormhole
 
-Move a coding session between Claude Code, Codex and opencode, and resume it on the other side.
+[![CI](https://github.com/ashutosh091/wormhole/actions/workflows/ci.yml/badge.svg)](https://github.com/ashutosh091/wormhole/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/agent-wormhole)](https://www.npmjs.com/package/agent-wormhole)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+**Move a coding session between Claude Code, Codex and opencode, and resume it on the other side.**
+
+Start a task in Claude Code, hit a usage limit or want a second opinion, run `wormhole switch codex`,
+and Codex opens with the whole conversation: what you asked, what was answered, and a one-line
+record of every tool call and its result, plus a short handoff note with the goal, open tasks, files touched and git state. Switch
+back later and Claude Code picks up its own session, with only the new turns from Codex added.
+
+- **Real native sessions**, not a pasted summary: `claude --resume`, `codex resume` and
+  `opencode --session` open them like any other.
+- **Round trips keep native history**: switching back extends a copy of the tool's own session.
+- **Several logins**: `claude@work`, `codex@alt`; `wormhole next` moves on when one runs out.
+- **Local only**: reads and writes the tools' own files on your machine; never edits or deletes an
+  existing session.
+
+## Install
 
 ```bash
-wormhole switch codex     # hand the current Claude Code session to Codex and open it
+npm i -g agent-wormhole   # Node 22+; installs the `wormhole` and `wh` commands
+wormhole hooks install    # optional: keep threads up to date after every turn
+wormhole doctor           # check tools, logins and hooks
+```
+
+## Quickstart
+
+```bash
+cd my-project             # where you have been working in Claude Code
+wormhole switch codex     # Codex opens with the conversation so far
+wormhole switch claude    # back to Claude Code, carrying what happened in Codex
+```
+
+## Commands
+
+```bash
+wormhole switch codex     # hand the current session to Codex and open it
 wormhole switch claude    # …and back, carrying what happened in Codex
 wormhole resume           # reopen whichever session is in use
 wormhole status           # thread for this directory, its sessions, newest per tool
@@ -14,16 +48,6 @@ wormhole switch claude@work  # another Claude Code login (see Several accounts)
 wormhole next             # out of usage? carry on in the next account or tool with room
 wormhole doctor           # check tools, logins, hooks, accounts and the store
 ```
-
-`wormhole doctor` prints one pass/WARN/FAIL line per check, with a fix after `→` on each problem, and
-exits 1 if anything fails (warnings alone exit 0; `--json` for scripts). It only reads: tool versions
-(`--version`), logins (`claude auth status`, `codex login status` with each account's folder in the
-env; neither spends tokens), whether each folder's hook is installed and still points at an existing
-node and `wormhole.js` (a moved repo breaks them; rerun `hooks install`), whether Codex notify still
-chains the program from before wormhole, account folders (exist, not the default, no duplicates),
-and the store: writable, every `thread.json` loads, no leftover `pending.json` journal or `.lock`
-older than 30 s, and the last `hook.log` error if it is under 7 days old. A missing opencode is a
-warning.
 
 ### Keeping threads current
 
@@ -55,6 +79,18 @@ session: Claude runs `claude -p --resume <id> --fork-session --no-session-persis
 Codex runs `codex exec resume` against a copy of the rollout in a throwaway `CODEX_HOME`, opencode
 runs `opencode run --session <id> --fork` and the fork is deleted afterwards. If the call fails or
 takes over 120 s, wormhole warns on stderr and uses the plain brief.
+
+### Checking the setup
+
+`wormhole doctor` prints one pass/WARN/FAIL line per check, with a fix after `→` on each problem, and
+exits 1 if anything fails (warnings alone exit 0; `--json` for scripts). It only reads: tool versions
+(`--version`), logins (`claude auth status`, `codex login status` with each account's folder in the
+env; neither spends tokens), whether each folder's hook is installed and still points at an existing
+node and `wormhole.js` (a moved repo breaks them; rerun `hooks install`), whether Codex notify still
+chains the program from before wormhole, account folders (exist, not the default, no duplicates),
+and the store: writable, every `thread.json` loads, no leftover `pending.json` journal or `.lock`
+older than 30 s, and the last `hook.log` error if it is under 7 days old. A missing opencode is a
+warning.
 
 ### Several accounts
 
@@ -194,3 +230,10 @@ npm test          # vitest, 2 workers
 npm run coverage  # same, with coverage; fails under 90% lines/functions, 80% branches
 npm link          # puts wormhole / wh on PATH
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) to work on wormhole and [docs/releasing.md](docs/releasing.md)
+for releases.
+
+## License
+
+[MIT](LICENSE)

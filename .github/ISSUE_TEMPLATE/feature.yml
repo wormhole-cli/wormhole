@@ -1,0 +1,16 @@
+name: Feature request
+description: A tool, workflow or option wormhole should support
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The workflow you have in mind, and where wormhole falls short today.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help
+      description: The command, option or behavior you would like.

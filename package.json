@@ -2,12 +2,41 @@
   "name": "agent-wormhole",
   "version": "0.1.0",
   "description": "Move a coding session between Claude Code, Codex and opencode, and resume it on the other side.",
-  "private": true,
+  "keywords": [
+    "claude-code",
+    "codex",
+    "opencode",
+    "ai-agents",
+    "coding-agent",
+    "agent-session",
+    "handoff",
+    "session-transfer",
+    "cli",
+    "llm",
+    "anthropic",
+    "openai"
+  ],
+  "homepage": "https://ashutosh091.github.io/wormhole/",
+  "bugs": {
+    "url": "https://github.com/ashutosh091/wormhole/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ashutosh091/wormhole.git"
+  },
+  "license": "MIT",
+  "author": "Ashutosh Kumar",
   "type": "module",
   "bin": {
     "wormhole": "bin/wormhole.js",
     "wh": "bin/wormhole.js"
   },
+  "files": [
+    "bin",
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "engines": {
     "node": ">=22"
   },
@@ -16,7 +45,8 @@
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --maxWorkers=2",
-    "coverage": "vitest run --maxWorkers=2 --coverage"
+    "coverage": "vitest run --maxWorkers=2 --coverage",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "commander": "^14.0.0",
@@ -28,5 +58,8 @@
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

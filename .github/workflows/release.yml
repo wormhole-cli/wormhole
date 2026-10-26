@@ -1,0 +1,76 @@
+name: Release
+
+# Push a vX.Y.Z tag to publish agent-wormhole to npm and create the GitHub release.
+# Run it by hand with dry-run to check everything without publishing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Run every step, but publish nothing
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+      - name: Check the tag matches package.json
+        if: github.event_name == 'push'
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/ { exit }
+            on && /^\[[^]]+\]: / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::no CHANGELOG.md section for $version"
+            exit 1
+          fi
+          cat notes.md
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # npm provenance needs a public repository.
+          PROVENANCE: ${{ !github.event.repository.private && '--provenance' || '' }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            npm publish --access public --dry-run
+          else
+            npm publish --access public $PROVENANCE
+          fi
+
+      - name: GitHub release
+        if: env.DRY_RUN != 'true' && github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --verify-tag

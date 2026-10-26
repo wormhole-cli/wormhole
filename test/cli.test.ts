@@ -297,7 +297,8 @@ describe('wormhole log and brief', () => {
 
   it('prints the version and exits 0', async () => {
     expect(await main(['node', 'wormhole', '--version'], deps())).toBe(0);
-    expect(out.join('')).toContain('0.1.0');
+    const { version } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+    expect(out.join('')).toContain(version);
   });
 });
 

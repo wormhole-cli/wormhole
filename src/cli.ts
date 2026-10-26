@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { oneLine } from './adapters/render.js';
 import type { NativeRef } from './adapters/types.js';
@@ -30,6 +31,9 @@ import { fallbackNote, fallbackOrder, pickFallback, resets } from './fallback.js
 import { launch, openUrl, shellLine } from './launch.js';
 import { sessionLimit } from './limits.js';
 import { activeSegment, type Event, eventTool, srcKey, TOOLS, Tool } from './model/thread.js';
+
+/** From package.json, one level up from both src/ (tests) and dist/ (installed), so `npm version` is the only bump. */
+const VERSION: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 
 /** What the CLI reaches outside itself; tests replace these. */
 export interface Deps {
@@ -65,7 +69,7 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
   program
     .name('wormhole')
     .description('Move a coding session between Claude Code, Codex and opencode, and resume it on the other side.')
-    .version('0.1.0')
+    .version(VERSION)
     .option('-C, --cwd <dir>', 'project directory (default: current directory)')
     .exitOverride();
 

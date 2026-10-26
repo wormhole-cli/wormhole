@@ -1,0 +1,36 @@
+name: Bug report
+description: Something went wrong switching, importing or resuming a session
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Output
+      description: The error or output, with private content removed.
+      render: text
+  - type: textarea
+    id: doctor
+    attributes:
+      label: wormhole doctor --json
+      description: Paste the output of `wormhole doctor --json`. It lists tool versions, hooks and accounts; check it for anything you consider private first.
+      render: json
+    validations:
+      required: true
+  - type: dropdown
+    id: tools
+    attributes:
+      label: Tools involved
+      multiple: true
+      options: [Claude Code, Claude Desktop, Codex CLI, Codex Desktop, opencode]
+  - type: input
+    id: os
+    attributes:
+      label: OS and Node version
+      placeholder: macOS 15, Node 22.15
