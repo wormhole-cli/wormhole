@@ -7,6 +7,11 @@ export interface NativeRef {
   startedAt: string;
   /** Last modification of the native file; used to pick the session in use. */
   updatedAt: string;
+  /**
+   * On a session wormhole just wrote: the read offset that covers what it wrote.
+   * Defaults to the file size, which fits tools that keep one append-only file.
+   */
+  offset?: number;
 }
 
 export interface ReadResult {

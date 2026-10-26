@@ -174,7 +174,7 @@ describe('switchTo', () => {
   });
 
   it('fails clearly when there is nothing to hand off', async () => {
-    await expect(switchTo(c, 'codex')).rejects.toThrow(/no Claude Code or Codex session/);
+    await expect(switchTo(c, 'codex')).rejects.toThrow(/no Claude Code, Codex or opencode session/);
   });
 });
 

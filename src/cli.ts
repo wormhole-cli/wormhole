@@ -100,7 +100,7 @@ program
       return run(c, adapter(c, tool).launchArgs(result.ref), !opts.launch);
     }
     const { active } = await sync(c);
-    if (!active) throw new Error(`no Claude Code or Codex session found for ${c.cwd}`);
+    if (!active) throw new Error(`no Claude Code, Codex or opencode session found for ${c.cwd}`);
     await run(c, adapter(c, active.tool).launchArgs(active), !opts.launch);
   });
 

@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { ClaudeAdapter } from './adapters/claude.js';
 import { CodexAdapter } from './adapters/codex.js';
+import { OpencodeAdapter } from './adapters/opencode.js';
 import type { NativeRef, ToolAdapter } from './adapters/types.js';
 import { buildBrief } from './handoff/brief.js';
 import { type GitInfo, gitInfo } from './handoff/git.js';
@@ -16,7 +17,11 @@ export interface Context {
 }
 
 export function defaultContext(cwd = process.cwd()): Context {
-  return { cwd, store: new Store(), adapters: { claude: new ClaudeAdapter(), codex: new CodexAdapter() } };
+  return {
+    cwd,
+    store: new Store(),
+    adapters: { claude: new ClaudeAdapter(), codex: new CodexAdapter(), opencode: new OpencodeAdapter() },
+  };
 }
 
 export function adapter(ctx: Context, tool: Tool): ToolAdapter {
@@ -137,7 +142,7 @@ export function missingFrom(seg: Segment, events: Event[]): Event[] | null {
 export async function switchTo(ctx: Context, to: Tool, opts: SyncOptions = {}): Promise<SwitchResult> {
   const target = adapter(ctx, to);
   const { thread, active } = await sync(ctx, opts);
-  if (!active) throw new Error(`no Claude Code or Codex session found for ${ctx.cwd}`);
+  if (!active) throw new Error(`no Claude Code, Codex or opencode session found for ${ctx.cwd}`);
   if (active.tool === to) return { ref: active, mode: 'resumed', from: active };
 
   const events = await ctx.store.readEvents(thread.id);
@@ -151,14 +156,14 @@ export async function switchTo(ctx: Context, to: Tool, opts: SyncOptions = {}): 
   const ref = base && delta ? await target.extend(base, delta, wctx) : await target.write(events, wctx);
   const mode = base ? 'extended' : 'synthesized';
 
-  const { size } = await fs.stat(ref.path);
+  const offset = ref.offset ?? (await fs.stat(ref.path)).size;
   thread.segments.push({
     tool: to,
     nativeId: ref.nativeId,
     path: ref.path,
     startedAt: ref.startedAt,
     // Everything written so far is already in the thread; only later turns get imported.
-    importedUpTo: size,
+    importedUpTo: offset,
     eventStart: events.length,
     derivedFrom: { tool: active.tool, nativeId: active.nativeId },
   });

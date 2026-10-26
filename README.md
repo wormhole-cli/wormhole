@@ -1,6 +1,6 @@
 # wormhole
 
-Move a coding session between Claude Code and Codex (opencode next), and resume it on the other side.
+Move a coding session between Claude Code, Codex and opencode, and resume it on the other side.
 
 ```bash
 wormhole switch codex     # hand the current Claude Code session to Codex and open it
@@ -33,7 +33,11 @@ tool-neutral events.
    in both cases foreign turns carry user and assistant text verbatim, each tool call flattened to one
    line (`▸ Bash: npm test → error: …`), then a handoff brief (goal, latest request, open tasks, files
    touched, git state). A tool call the copied session left open is closed with an error result first;
-3. opens it with `claude --resume <id>` or `codex resume <id>`.
+3. opens it with `claude --resume <id>`, `codex resume <id>` or `opencode --session <id>`.
+
+opencode sessions are read with `opencode export` and written with `opencode import`; wormhole never
+touches its database. Written opencode messages use `WORMHOLE_OPENCODE_MODEL` (`provider/model`) if
+set, else the model last used in that project, else `model` from opencode's config.
 
 Reasoning is never copied (Claude thinking signatures and Codex encrypted reasoning only verify with
 their own provider), and wormhole never edits or deletes an existing native session. See

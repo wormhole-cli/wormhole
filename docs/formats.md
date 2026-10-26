@@ -40,7 +40,26 @@ Record fields used: `type`, `uuid`, `parentUuid`, `sessionId`, `cwd`, `gitBranch
 Content blocks: `text`, `tool_use`, `tool_result`, `thinking` (signature-checked: never forge).
 Skip on read: `system`, `attachment`, `file-history-*`, `mode`, `queue-operation`, sidechains.
 
-## opencode
+## opencode (1.19.0)
 
-SQLite at `~/.local/share/opencode/opencode.db`. Use `opencode export <id>` / `opencode import <file>`;
-never write the db.
+SQLite at `$XDG_DATA_HOME/opencode/opencode.db`. wormhole never writes it: it reads with
+`opencode export <id>` and writes with `opencode import <file>`.
+
+**Spike result:** a hand-built export (`{info, messages: [{info, parts}]}`) imports, keeps the ids
+given, shows up in `opencode session list`, and `opencode run -s <id>` answers from its history.
+Importing the same id again upserts, so a copy needs fresh ids for the session, every message and
+every part.
+
+- Ids: `<prefix>_` + 12 hex chars of `(ms * 0x1000 + counter) & 0xffffffffffff` + 14 random base62
+  chars. Sessions (`ses_`) invert the number so newer sorts first; `msg_` and `prt_` ascend, and
+  messages are ordered by id.
+- `projectID`: the sorted-first root commit (`git rev-list --max-parents=0 --all`) for a git repo,
+  otherwise `global`.
+- User message info: `role, time.created, agent, model{providerID, modelID}`. Assistant info:
+  `role, parentID, mode, agent, providerID, modelID, path{cwd, root}, cost, tokens, time{created,
+  completed}, finish`. An assistant message without `time.completed` is still in flight.
+- Parts: `text`, `reasoning` (dropped), `tool {callID, tool, state{status, input, output, metadata.exit}}`,
+  `step-start`/`step-finish`, `patch`, `compaction`. A compaction summary is an assistant message
+  with `summary: true`, `mode: "compaction"`.
+- **Gotcha:** opencode exits before draining a stdout pipe, so `export` / `session list` output over
+  8 KB arrives truncated. wormhole points stdout at a file instead.
