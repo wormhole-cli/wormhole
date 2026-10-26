@@ -2,6 +2,8 @@ import type { Event, Tool } from '../model/thread.js';
 
 export interface NativeRef {
   tool: Tool;
+  /** Set by core for sessions of a named account; adapters leave it alone. */
+  account?: string;
   nativeId: string;
   path: string;
   startedAt: string;
@@ -29,6 +31,10 @@ export interface WriteContext {
 
 export interface ToolAdapter {
   tool: Tool;
+  /** Named account this adapter reads and writes, when not the tool's default login. */
+  account?: string;
+  /** Environment that points the tool's CLI at this adapter's folder (set for named accounts). */
+  env?: Record<string, string>;
   /** Newest native session for this project directory, if any. */
   detectLatest(cwd: string): Promise<NativeRef | null>;
   /** A specific native session of this project by id. */

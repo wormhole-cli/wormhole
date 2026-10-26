@@ -33,8 +33,15 @@ export type Runner = (argv: string[], opts: RunOptions) => Promise<RunResult>;
  * Claude forks and does not persist, Codex runs ephemeral, opencode forks and the fork is
  * deleted afterwards.
  */
-export async function summarize(ref: NativeRef, cwd: string, run: Runner, timeoutMs = SUMMARY_TIMEOUT_MS): Promise<string> {
-  const opts = { cwd, timeoutMs };
+export async function summarize(
+  ref: NativeRef,
+  cwd: string,
+  run: Runner,
+  timeoutMs = SUMMARY_TIMEOUT_MS,
+  /** Points the CLI at a named account's folder (the adapter's `env`). */
+  accountEnv: Record<string, string> = {},
+): Promise<string> {
+  const opts = { cwd, timeoutMs, ...(Object.keys(accountEnv).length > 0 ? { env: { ...process.env, ...accountEnv } } : {}) };
   switch (ref.tool) {
     case 'claude': {
       const r = await run(
@@ -50,7 +57,7 @@ export async function summarize(ref: NativeRef, cwd: string, run: Runner, timeou
       // throwaway CODEX_HOME holding a copy of the rollout, with the real auth and config.
       const home = await fs.mkdtemp(path.join(tmpdir(), 'wormhole-summary-'));
       try {
-        const realHome = process.env.CODEX_HOME || path.join(homedir(), '.codex');
+        const realHome = accountEnv.CODEX_HOME || process.env.CODEX_HOME || path.join(homedir(), '.codex');
         const sessions = path.join(home, 'sessions');
         await fs.mkdir(sessions);
         await fs.copyFile(ref.path, path.join(sessions, path.basename(ref.path)));

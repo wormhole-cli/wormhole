@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import type { ToolAdapter } from '../adapters/types.js';
 import { type Context, defaultContext, sync } from '../core.js';
 import type { Tool } from '../model/thread.js';
 import { wormholeHome } from '../store/store.js';
@@ -52,11 +53,20 @@ export function parseOpencodeHook(payload: string | undefined): HookInput | null
  */
 export async function importFromHook(input: HookInput, base: Context = defaultContext(input.cwd)): Promise<number> {
   if (!(await base.store.loadForCwd(input.cwd))) return 0;
+  // The hook does not say which account's folder it ran from: the one holding the session.
+  let found: [string, ToolAdapter] | undefined;
+  for (const [key, a] of Object.entries(base.adapters) as [string, ToolAdapter][]) {
+    // Tools also report helper threads wormhole does not follow (Codex subagents, unsaved threads).
+    if (a.tool === input.tool && (await a.locate(input.cwd, input.session))) {
+      found = [key, a];
+      break;
+    }
+  }
+  if (!found) return 0;
   // Only the reporting tool: probing the others (opencode spawns a CLI) would slow every turn.
-  const ctx: Context = { ...base, cwd: input.cwd, adapters: { [input.tool]: base.adapters[input.tool] } };
-  // Tools also report helper threads wormhole does not follow (Codex subagents, unsaved threads).
-  if (!(await base.adapters[input.tool]?.locate(input.cwd, input.session))) return 0;
-  const { imported } = await sync(ctx, { tool: input.tool, session: input.session });
+  const [key, a] = found;
+  const ctx: Context = { ...base, cwd: input.cwd, adapters: { [key]: a } };
+  const { imported } = await sync(ctx, { tool: key, session: input.session });
   return imported.reduce((n, i) => n + i.events, 0);
 }
 

@@ -10,6 +10,7 @@ wormhole status           # thread for this directory, its sessions, newest per 
 wormhole log              # the thread, one line per event
 wormhole brief --to codex # the handoff note a switch would add
 wormhole import           # pull new turns without switching
+wormhole switch claude@work  # another Claude Code login (see Several accounts)
 ```
 
 ### Keeping threads current
@@ -42,6 +43,27 @@ session: Claude runs `claude -p --resume <id> --fork-session --no-session-persis
 Codex runs `codex exec resume` against a copy of the rollout in a throwaway `CODEX_HOME`, opencode
 runs `opencode run --session <id> --fork` and the fork is deleted afterwards. If the call fails or
 takes over 120 s, wormhole warns on stderr and uses the plain brief.
+
+### Several accounts
+
+Claude Code and Codex keep each login, with its sessions, in one folder (`CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`). Register extra folders as named accounts and use them as `tool@name`:
+
+```bash
+wormhole accounts add work --tool claude --dir ~/.claude-work   # then log in once: env CLAUDE_CONFIG_DIR=~/.claude-work claude
+wormhole accounts add alt --tool codex --dir ~/.codex-alt       # env CODEX_HOME=~/.codex-alt codex login
+wormhole switch claude@work   # e.g. personal Claude hit its limit: carry on in the work login
+wormhole switch codex@alt
+wormhole accounts             # list; `accounts remove claude@work` forgets one (its folder is left alone)
+```
+
+Plain `claude` / `codex` is the default folder. Moving between accounts of one tool with nothing from
+other tools in between is a plain copy of the native session into the other folder, with no handoff
+note; otherwise it works like any switch, extending the tool's latest session from whichever account
+holds it. Sessions are launched as `env CLAUDE_CONFIG_DIR=<dir> claude --resume <id>` (or `CODEX_HOME`).
+Accounts are listed in `~/.wormhole/accounts.json`; `hooks install` also installs into every account's
+folder, and status and log show `tool@account`. `--app` works only for the default folder:
+the desktop apps read only that one. opencode has no account folders.
 
 ## How it works
 

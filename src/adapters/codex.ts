@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Event } from '../model/thread.js';
 import { atomicWrite } from '../store/store.js';
-import { cliVersion, readJsonlFrom, toJsonl } from './jsonl.js';
+import { cliVersion, envPrefix, readJsonlFrom, toJsonl } from './jsonl.js';
 import { CONTINUED, toTurns, type Turn } from './render.js';
 import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.js';
 
@@ -22,16 +22,22 @@ const INJECTED_PREFIXES = [
 export interface CodexOptions {
   /** Defaults to $CODEX_HOME or ~/.codex. */
   home?: string;
+  /** Named account living in home: launches set CODEX_HOME to it. */
+  account?: string;
   /** Recorded in session_meta; defaults to `codex --version`. */
   cliVersion?: string;
 }
 
 export class CodexAdapter implements ToolAdapter {
   readonly tool = 'codex' as const;
+  readonly account?: string;
+  readonly env?: Record<string, string>;
   private readonly home: string;
 
   constructor(private readonly opts: CodexOptions = {}) {
     this.home = opts.home ?? (process.env.CODEX_HOME || path.join(homedir(), '.codex'));
+    this.account = opts.account;
+    if (opts.account) this.env = { CODEX_HOME: this.home };
   }
 
   /**
@@ -210,11 +216,12 @@ export class CodexAdapter implements ToolAdapter {
   }
 
   launchArgs(ref: NativeRef): string[] {
-    return ['codex', 'resume', ref.nativeId];
+    return [...envPrefix(this.env), 'codex', 'resume', ref.nativeId];
   }
 
   /** Opens the thread in Codex Desktop, which indexes the rollout on the way. */
   appUrl(ref: NativeRef): string {
+    if (this.account) throw new Error('Codex Desktop only reads the default Codex folder; drop --app for codex@' + this.account);
     return `codex://threads/${ref.nativeId}`;
   }
 

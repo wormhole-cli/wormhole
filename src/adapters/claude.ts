@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { Event } from '../model/thread.js';
 import { atomicWrite } from '../store/store.js';
-import { cliVersion, newestByMtime, readJsonlFrom, toJsonl } from './jsonl.js';
+import { cliVersion, envPrefix, newestByMtime, readJsonlFrom, toJsonl } from './jsonl.js';
 import { CONTINUED, toTurns, type Turn } from './render.js';
 import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.js';
 
@@ -19,6 +19,8 @@ const FILE_TOOLS: Record<string, 'create' | 'edit'> = {
 export interface ClaudeOptions {
   /** Defaults to $CLAUDE_CONFIG_DIR or ~/.claude. */
   configDir?: string;
+  /** Named account living in configDir: launches set CLAUDE_CONFIG_DIR to it. */
+  account?: string;
   /** Recorded in written transcripts; defaults to `claude --version`. */
   version?: string;
 }
@@ -30,10 +32,14 @@ export function encodeCwd(cwd: string): string {
 
 export class ClaudeAdapter implements ToolAdapter {
   readonly tool = 'claude' as const;
+  readonly account?: string;
+  readonly env?: Record<string, string>;
   private readonly configDir: string;
 
   constructor(private readonly opts: ClaudeOptions = {}) {
     this.configDir = opts.configDir ?? (process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'));
+    this.account = opts.account;
+    if (opts.account) this.env = { CLAUDE_CONFIG_DIR: this.configDir };
   }
 
   projectDir(cwd: string): string {
@@ -220,11 +226,12 @@ export class ClaudeAdapter implements ToolAdapter {
   }
 
   launchArgs(ref: NativeRef): string[] {
-    return ['claude', '--resume', ref.nativeId];
+    return [...envPrefix(this.env), 'claude', '--resume', ref.nativeId];
   }
 
   /** Claude Desktop imports a CLI session by id from this link. */
   appUrl(ref: NativeRef): string {
+    if (this.account) throw new Error('Claude Desktop only reads the default Claude Code folder; drop --app for claude@' + this.account);
     return `claude://resume?session=${ref.nativeId}`;
   }
 }

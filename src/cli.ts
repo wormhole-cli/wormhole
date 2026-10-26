@@ -1,7 +1,8 @@
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { oneLine } from './adapters/render.js';
 import type { NativeRef } from './adapters/types.js';
-import { adapter, type Context, defaultContext, makeBrief, type SwitchResult, switchTo, sync } from './core.js';
+import { type Account, addAccount, loadAccounts, parseKey, removeAccount } from './accounts.js';
+import { adapter, type Context, defaultContext, makeBrief, refKey, type SwitchResult, switchTo, sync } from './core.js';
 import {
   importFromHook,
   logHookError,
@@ -13,6 +14,7 @@ import {
   THEN,
 } from './hooks/handle.js';
 import {
+  accountHookInstalled,
   claudeSettingsPath,
   codexConfigPath,
   install,
@@ -24,7 +26,7 @@ import {
 } from './hooks/install.js';
 import { type Runner, runCapture, summarize } from './handoff/summary.js';
 import { launch, openUrl, shellLine } from './launch.js';
-import { activeSegment, type Event, eventTool, TOOLS, Tool } from './model/thread.js';
+import { activeSegment, type Event, eventTool, srcKey, TOOLS, Tool } from './model/thread.js';
 
 /** What the CLI reaches outside itself; tests replace these. */
 export interface Deps {
@@ -72,15 +74,25 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     return parsed.data;
   }
 
+  /** A tool, or a tool's named account: `claude`, `claude@work`. */
+  function parseTarget(value: string): string {
+    try {
+      parseKey(value);
+      return value;
+    } catch {
+      throw new InvalidArgumentError(`expected one of ${TOOLS.join(', ')}, optionally with @account`);
+    }
+  }
+
   const fromOption = () =>
-    new Option('--from <tool>', 'tool that owns --session').argParser(parseTool);
+    new Option('--from <tool>', 'tool (or tool@account) that owns --session').argParser(parseTarget);
 
   /** The leaving tool's own summary of `ref`, or undefined (with a warning) when it cannot give one. */
   async function askSummary(c: Context, ref: NativeRef | null, to?: Tool) {
     if (!ref || ref.tool === to) return undefined;
-    console.error(`Asking ${ref.tool} for a summary of ${ref.nativeId}…`);
+    console.error(`Asking ${refKey(ref)} for a summary of ${ref.nativeId}…`);
     try {
-      return { tool: ref.tool, text: await summarize(ref, c.cwd, deps.run) };
+      return { tool: ref.tool, text: await summarize(ref, c.cwd, deps.run, undefined, adapter(c, refKey(ref)).env) };
     } catch (err) {
       console.error(`wormhole: no summary from ${ref.tool} (${err instanceof Error ? err.message : String(err)}); using the plain brief`);
       return undefined;
@@ -88,7 +100,7 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
   }
 
   async function run(c: Context, ref: NativeRef, opts: { launch: boolean; app?: boolean }) {
-    const a = adapter(c, ref.tool);
+    const a = adapter(c, refKey(ref));
     if (opts.app) {
       if (!a.appUrl) throw new Error(`${ref.tool} has no desktop app link; drop --app to open it in the terminal`);
       const url = a.appUrl(ref);
@@ -111,18 +123,18 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
         const active = activeSegment(thread);
         console.log(`thread ${thread.id}  ${thread.title}`);
         console.log(`cwd    ${thread.cwd}`);
-        console.log(`last   ${active ? `${active.tool} ${active.nativeId}` : '(none)'}`);
+        console.log(`last   ${active ? `${refKey(active)} ${active.nativeId}` : '(none)'}`);
         for (const seg of thread.segments) {
-          const via = seg.derivedFrom ? `  (handed off from ${seg.derivedFrom.tool})` : '';
-          console.log(`  ${seg.startedAt}  ${seg.tool.padEnd(8)} ${seg.nativeId}${via}`);
+          const via = seg.derivedFrom ? `  (handed off from ${refKey(seg.derivedFrom)})` : '';
+          console.log(`  ${seg.startedAt}  ${refKey(seg).padEnd(10)} ${seg.nativeId}${via}`);
         }
       } else {
         console.log(`No wormhole thread for ${c.cwd} yet.`);
       }
       console.log('newest native sessions:');
-      for (const [tool, a] of Object.entries(c.adapters)) {
-        const ref = await a.detectLatest(c.cwd);
-        console.log(`  ${tool.padEnd(8)} ${ref ? `${ref.nativeId}  updated ${ref.updatedAt}` : '(none)'}`);
+      for (const [key, a] of Object.entries(c.adapters)) {
+        const ref = await a!.detectLatest(c.cwd);
+        console.log(`  ${key.padEnd(10)} ${ref ? `${ref.nativeId}  updated ${ref.updatedAt}` : '(none)'}`);
       }
     });
 
@@ -132,30 +144,31 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .addOption(fromOption())
     .option('-s, --session <id>', 'import this session (needs --from)')
     .option('-q, --quiet', 'print nothing')
-    .action(async (opts: { from?: Tool; session?: string; quiet?: boolean }) => {
+    .action(async (opts: { from?: string; session?: string; quiet?: boolean }) => {
       if (opts.session && !opts.from) throw new Error('--session needs --from');
       const { imported } = await sync(ctx(), { tool: opts.from, session: opts.session });
       if (opts.quiet) return;
       if (imported.length === 0) console.log('Nothing new.');
       for (const i of imported) {
-        console.log(`${i.isNew ? 'adopted' : 'updated'} ${i.tool} ${i.nativeId}: +${i.events} events`);
+        console.log(`${i.isNew ? 'adopted' : 'updated'} ${refKey(i)} ${i.nativeId}: +${i.events} events`);
       }
     });
 
   program
     .command('switch')
     .description('Hand the thread off to another tool and open it there')
-    .argument('<tool>', TOOLS.join(' | '), parseTool)
+    .argument('<tool>', `${TOOLS.join(' | ')}, or tool@account`, parseTarget)
     .addOption(fromOption())
     .option('-s, --session <id>', 'hand off this session instead of the newest (needs --from)')
     .option('--no-launch', 'write the session and print the command, but do not open it')
     .option('--app', 'open it in the desktop app (Claude Desktop, Codex Desktop) instead of the terminal')
     .option('--summarize', 'ask the tool being left for a short summary and add it to the brief')
-    .action(async (to: Tool, opts: { from?: Tool; session?: string; launch: boolean; app?: boolean; summarize?: boolean }) => {
+    .action(async (to: string, opts: { from?: string; session?: string; launch: boolean; app?: boolean; summarize?: boolean }) => {
       if (opts.session && !opts.from) throw new Error('--session needs --from');
       const c = ctx();
+      adapter(c, to);
       const from = { tool: opts.from, session: opts.session };
-      const summary = opts.summarize ? await askSummary(c, (await sync(c, from)).active, to) : undefined;
+      const summary = opts.summarize ? await askSummary(c, (await sync(c, from)).active, parseKey(to).tool) : undefined;
       const result = await switchTo(c, to, { ...from, summary });
       report(result, to);
       await run(c, result.ref, opts);
@@ -164,10 +177,10 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
   program
     .command('resume')
     .description('Reopen the session in use; with a tool, switch to it first if needed')
-    .argument('[tool]', TOOLS.join(' | '), parseTool)
+    .argument('[tool]', `${TOOLS.join(' | ')}, or tool@account`, parseTarget)
     .option('--no-launch', 'print the command, but do not open it')
     .option('--app', 'open it in the desktop app instead of the terminal')
-    .action(async (tool: Tool | undefined, opts: { launch: boolean; app?: boolean }) => {
+    .action(async (tool: string | undefined, opts: { launch: boolean; app?: boolean }) => {
       const c = ctx();
       if (tool) {
         const result = await switchTo(c, tool);
@@ -188,9 +201,12 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
       const { thread } = await sync(c);
       const events = await c.store.readEvents(thread.id);
 
+      // Label by the session an event came from, so named accounts show as tool@account.
+      const bySrc = new Map(thread.segments.map((s) => [srcKey(s), refKey(s)]));
+      const label = (e: Event, i: number) => (e.src && bySrc.get(e.src)) || eventTool(e, i, thread.segments) || '?';
       const from = Math.max(0, events.length - opts.limit);
       events.slice(from).forEach((e, k) => {
-        console.log(`${String(from + k).padStart(5)} ${(eventTool(e, from + k, thread.segments) ?? '?').padEnd(8)} ${describe(e)}`);
+        console.log(`${String(from + k).padStart(5)} ${label(e, from + k).padEnd(10)} ${describe(e)}`);
       });
     });
 
@@ -225,7 +241,7 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .option('--codex', 'only Codex')
     .option('--opencode', 'only opencode (default: included when opencode is on PATH)')
     .action(async (opts: HookOpts) => {
-      for (const line of await install(await hookTargets(opts, true))) console.log(line);
+      for (const line of await install(await hookTargets(opts, true), undefined, loadAccounts())) console.log(line);
       console.log('Hooks only update projects that already have a wormhole thread.');
     });
 
@@ -236,7 +252,7 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .option('--codex', 'only Codex')
     .option('--opencode', 'only opencode')
     .action(async (opts: HookOpts) => {
-      const done = await uninstall(await hookTargets(opts, false));
+      const done = await uninstall(await hookTargets(opts, false), loadAccounts());
       for (const line of done) console.log(line);
       if (done.length === 0) console.log('No wormhole hooks installed.');
     });
@@ -247,7 +263,47 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .action(async () => {
       const s = await hookStatus();
       const where = { claude: claudeSettingsPath(), codex: codexConfigPath(), opencode: opencodePluginPath() };
-      for (const t of ALL_HOOKS) console.log(`${t.padEnd(10)}${s[t] ? 'installed' : 'not installed'}  (${where[t]})`);
+      for (const t of ALL_HOOKS) console.log(`${t.padEnd(14)}${s[t] ? 'installed' : 'not installed'}  (${where[t]})`);
+      for (const a of loadAccounts()) {
+        const key = `${a.tool}@${a.name}`;
+        console.log(`${key.padEnd(14)}${(await accountHookInstalled(a)) ? 'installed' : 'not installed'}  (${a.dir})`);
+      }
+    });
+
+  const accounts = program
+    .command('accounts')
+    .description('Extra Claude Code or Codex logins, each in its own folder; use them as tool@name');
+
+  accounts
+    .command('list', { isDefault: true })
+    .description('Show the accounts')
+    .action(() => {
+      const list = loadAccounts();
+      if (list.length === 0) console.log('No accounts. Add one with: wormhole accounts add <name> --tool claude --dir <folder>');
+      for (const a of list) console.log(`${`${a.tool}@${a.name}`.padEnd(20)} ${a.dir}`);
+    });
+
+  accounts
+    .command('add')
+    .description("Register a folder holding another login (Claude Code's CLAUDE_CONFIG_DIR, Codex's CODEX_HOME)")
+    .argument('<name>', 'short name: lowercase letters, digits, dashes')
+    .requiredOption('--tool <tool>', 'claude or codex')
+    .requiredOption('--dir <folder>', 'the account folder')
+    .action(async (name: string, opts: { tool: string; dir: string }) => {
+      const a: Account = await addAccount({ name, tool: opts.tool, dir: opts.dir });
+      const env = a.tool === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME';
+      console.log(`Added ${a.tool}@${a.name} (${a.dir}).`);
+      console.log(`Log in once with: env ${env}=${a.dir} ${a.tool === 'claude' ? 'claude' : 'codex login'}`);
+      console.log('Run `wormhole hooks install` again to add the hooks to it.');
+    });
+
+  accounts
+    .command('remove')
+    .description('Forget an account (its folder and sessions are left alone)')
+    .argument('<account>', 'tool@name')
+    .action(async (key: string) => {
+      const a = await removeAccount(key);
+      console.log(`Removed ${a.tool}@${a.name}; ${a.dir} is untouched.`);
     });
 
   // Called by the tools themselves; argv after the tool is parsed by hand because
@@ -281,15 +337,15 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
   return program;
 }
 
-function report({ ref, mode, from, base }: SwitchResult, to: Tool) {
+function report({ ref, mode, from, base }: SwitchResult, to: string) {
   if (mode === 'resumed') {
     console.log(`${to} already holds the active session ${ref.nativeId}; resuming it.`);
     return;
   }
-  console.log(`Handed off ${from!.tool} ${from!.nativeId} → ${to} ${ref.nativeId}`);
+  console.log(`Handed off ${refKey(from!)} ${from!.nativeId} → ${to} ${ref.nativeId}`);
   console.log(
     mode === 'extended'
-      ? `  continues a copy of ${to} ${base!.nativeId} with only the newer turns added`
+      ? `  continues a copy of ${refKey(base!)} ${base!.nativeId} with only the newer turns added`
       : '  new session holding the whole thread',
   );
 }

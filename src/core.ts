@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { type Account, keyOf, loadAccounts, parseKey } from './accounts.js';
 import { ClaudeAdapter } from './adapters/claude.js';
 import { CodexAdapter } from './adapters/codex.js';
 import { OpencodeAdapter } from './adapters/opencode.js';
@@ -9,7 +10,8 @@ import { type GitInfo, gitInfo } from './handoff/git.js';
 import { type Event, type Segment, srcKey, type Thread, type Tool } from './model/thread.js';
 import { Store } from './store/store.js';
 
-export type Adapters = Partial<Record<Tool, ToolAdapter>>;
+/** Adapters by key: a tool (`claude`) or a tool's named account (`claude@work`). */
+export type Adapters = Partial<Record<string, ToolAdapter>>;
 
 export interface Context {
   cwd: string;
@@ -17,23 +19,33 @@ export interface Context {
   adapters: Adapters;
 }
 
-export function defaultContext(cwd = process.cwd()): Context {
-  return {
-    cwd,
-    store: new Store(),
-    adapters: { claude: new ClaudeAdapter(), codex: new CodexAdapter(), opencode: new OpencodeAdapter() },
-  };
+export function defaultContext(cwd = process.cwd(), accounts: Account[] = loadAccounts()): Context {
+  const adapters: Adapters = { claude: new ClaudeAdapter(), codex: new CodexAdapter(), opencode: new OpencodeAdapter() };
+  for (const a of accounts) {
+    adapters[keyOf(a.tool, a.name)] =
+      a.tool === 'claude'
+        ? new ClaudeAdapter({ configDir: a.dir, account: a.name })
+        : new CodexAdapter({ home: a.dir, account: a.name });
+  }
+  return { cwd, store: new Store(), adapters };
 }
 
-export function adapter(ctx: Context, tool: Tool): ToolAdapter {
-  const a = ctx.adapters[tool];
-  if (!a) throw new Error(`${tool} is not supported yet`);
-  return a;
+/** The adapter for a key: `claude`, or `claude@work` for a named account. */
+export function adapter(ctx: Context, key: string): ToolAdapter {
+  const a = ctx.adapters[key];
+  if (a) return a;
+  const { tool, account } = parseKey(key);
+  throw new Error(account ? `no account ${key}; add it with: wormhole accounts add ${account} --tool ${tool} --dir <folder>` : `${tool} is not supported yet`);
+}
+
+/** Key of the tool and account a session or segment belongs to. */
+export function refKey(r: { tool: Tool; account?: string }): string {
+  return keyOf(r.tool, r.account);
 }
 
 export interface SyncOptions {
-  /** Import this session of `tool` instead of auto-detecting. */
-  tool?: Tool;
+  /** Import this session of `tool` (a key: `claude`, `claude@work`) instead of auto-detecting. */
+  tool?: string;
   session?: string;
 }
 
@@ -41,7 +53,7 @@ export interface SyncResult {
   thread: Thread;
   /** The session most recently in use, across all tools. */
   active: NativeRef | null;
-  imported: { tool: Tool; nativeId: string; events: number; isNew: boolean }[];
+  imported: { tool: Tool; account?: string; nativeId: string; events: number; isNew: boolean }[];
 }
 
 /**
@@ -78,20 +90,27 @@ export function withArtifactPaths(home: Store, threadId: string, events: Event[]
   );
 }
 
+/** A ref as core passes it around: marked with the account of the adapter that found it. */
+function tagged(ref: NativeRef, a: ToolAdapter): NativeRef {
+  return a.account ? { ...ref, account: a.account } : ref;
+}
+
 async function syncUnlocked(ctx: Context, opts: SyncOptions, home: Store): Promise<SyncResult> {
   const thread = await ctx.store.loadOrCreateForCwd(ctx.cwd);
   const refs: NativeRef[] = [];
-  for (const [tool, a] of Object.entries(ctx.adapters) as [Tool, ToolAdapter][]) {
+  if (opts.tool) adapter(ctx, opts.tool);
+  for (const [key, a] of Object.entries(ctx.adapters) as [string, ToolAdapter][]) {
     const ref =
-      opts.session && opts.tool === tool ? await a.locate(ctx.cwd, opts.session) : await a.detectLatest(ctx.cwd);
-    if (opts.session && opts.tool === tool && !ref) throw new Error(`no ${tool} session ${opts.session} for ${ctx.cwd}`);
-    if (ref) refs.push(ref);
+      opts.session && opts.tool === key ? await a.locate(ctx.cwd, opts.session) : await a.detectLatest(ctx.cwd);
+    if (opts.session && opts.tool === key && !ref) throw new Error(`no ${key} session ${opts.session} for ${ctx.cwd}`);
+    if (ref) refs.push(tagged(ref, a));
   }
   // Known segments whose file is no longer the newest still get their new turns.
   for (const seg of thread.segments) {
     if (refs.some((r) => r.tool === seg.tool && r.nativeId === seg.nativeId)) continue;
-    const ref = await ctx.adapters[seg.tool]?.locate(ctx.cwd, seg.nativeId);
-    if (ref) refs.push(ref);
+    const a = ctx.adapters[refKey(seg)];
+    const ref = await a?.locate(ctx.cwd, seg.nativeId);
+    if (a && ref) refs.push(tagged(ref, a));
   }
 
   const explicit = opts.session ? refs.find((r) => r.nativeId === opts.session) : undefined;
@@ -102,7 +121,7 @@ async function syncUnlocked(ctx: Context, opts: SyncOptions, home: Store): Promi
   for (const ref of refs) {
     const seg = thread.segments.find((s) => s.tool === ref.tool && s.nativeId === ref.nativeId);
     if (!seg && ref !== active) continue;
-    const { events, offset } = await adapter(ctx, ref.tool).read(ref, seg?.importedUpTo ?? 0);
+    const { events, offset } = await adapter(ctx, refKey(ref)).read(ref, seg?.importedUpTo ?? 0);
     const src = srcKey(ref);
     const kept: Event[] = [];
     for (const e of events) kept.push({ ...(await stash(home, thread.id, e)), src });
@@ -112,6 +131,7 @@ async function syncUnlocked(ctx: Context, opts: SyncOptions, home: Store): Promi
     } else {
       thread.segments.push({
         tool: ref.tool,
+        ...(ref.account ? { account: ref.account } : {}),
         nativeId: ref.nativeId,
         path: ref.path,
         startedAt: ref.startedAt,
@@ -119,7 +139,9 @@ async function syncUnlocked(ctx: Context, opts: SyncOptions, home: Store): Promi
         eventStart: start,
       });
     }
-    if (events.length > 0 || !seg) imported.push({ tool: ref.tool, nativeId: ref.nativeId, events: events.length, isNew: !seg });
+    if (events.length > 0 || !seg) {
+      imported.push({ tool: ref.tool, account: ref.account, nativeId: ref.nativeId, events: events.length, isNew: !seg });
+    }
   }
   await ctx.store.save(thread);
   return { thread, active, imported };
@@ -169,42 +191,48 @@ export function missingFrom(seg: Segment, events: Event[]): Event[] | null {
 }
 
 /**
- * Hand the thread to `to`. When `to` already has a session in this thread, a copy of
- * it is extended with what happened elsewhere, so its native tool calls survive;
- * otherwise a new session is synthesized from the whole thread.
+ * Hand the thread to `to` (a tool, or `tool@account`). When that tool already has a
+ * session in this thread, in any account, a copy of it is extended with what happened
+ * elsewhere, so its native tool calls survive; otherwise a new session is synthesized
+ * from the whole thread. Moving between accounts of one tool is a plain native copy.
  */
-export async function switchTo(ctx: Context, to: Tool, opts: SwitchOptions = {}): Promise<SwitchResult> {
+export async function switchTo(ctx: Context, to: string, opts: SwitchOptions = {}): Promise<SwitchResult> {
   return ctx.store.transaction(ctx.cwd, (store) => switchUnlocked({ ...ctx, store }, to, opts, ctx.store));
 }
 
-async function switchUnlocked(ctx: Context, to: Tool, opts: SwitchOptions, home: Store): Promise<SwitchResult> {
+async function switchUnlocked(ctx: Context, to: string, opts: SwitchOptions, home: Store): Promise<SwitchResult> {
   const target = adapter(ctx, to);
+  const tool = target.tool;
   const { thread, active } = await syncUnlocked(ctx, opts, home);
   if (!active) throw new Error(`no Claude Code, Codex or opencode session found for ${ctx.cwd}`);
-  if (active.tool === to) return { ref: active, mode: 'resumed', from: active };
+  if (refKey(active) === to) return { ref: active, mode: 'resumed', from: active };
 
   const events = withArtifactPaths(home, thread.id, await ctx.store.readEvents(thread.id));
-  const last = thread.segments.findLast((s) => s.tool === to);
+  // The tool's latest session, whichever account it is in: the target account gets a copy.
+  const last = thread.segments.findLast((s) => s.tool === tool && ctx.adapters[refKey(s)]);
   const delta = last ? missingFrom(last, events) : null;
-  const base = last && delta ? ((await target.locate(ctx.cwd, last.nativeId)) ?? undefined) : undefined;
+  const base = last && delta ? ((await adapter(ctx, refKey(last)).locate(ctx.cwd, last.nativeId)) ?? undefined) : undefined;
 
   const git = await gitInfo(ctx.cwd);
-  const brief = await makeBrief(ctx, thread, to, git, base !== undefined, opts.summary);
+  // Only another account of the same tool is being left: a plain copy needs no handoff note.
+  const brief =
+    base && delta?.length === 0 ? undefined : await makeBrief(ctx, thread, tool, git, base !== undefined, opts.summary);
   const wctx = { cwd: ctx.cwd, gitBranch: git?.branch, brief };
   const ref = base && delta ? await target.extend(base, delta, wctx) : await target.write(events, wctx);
   const mode = base ? 'extended' : 'synthesized';
 
   const offset = ref.offset ?? (await fs.stat(ref.path)).size;
   thread.segments.push({
-    tool: to,
+    tool,
+    ...(target.account ? { account: target.account } : {}),
     nativeId: ref.nativeId,
     path: ref.path,
     startedAt: ref.startedAt,
     // Everything written so far is already in the thread; only later turns get imported.
     importedUpTo: offset,
     eventStart: events.length,
-    derivedFrom: { tool: active.tool, nativeId: active.nativeId },
+    derivedFrom: { tool: active.tool, ...(active.account ? { account: active.account } : {}), nativeId: active.nativeId },
   });
   await ctx.store.save(thread);
-  return { ref, mode, from: active, base };
+  return { ref: tagged(ref, target), mode, from: active, base: base && tagged(base, adapter(ctx, refKey(last!))) };
 }

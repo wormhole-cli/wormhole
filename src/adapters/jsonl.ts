@@ -27,6 +27,12 @@ export async function readJsonlFrom(file: string, fromOffset = 0): Promise<{ rec
   return { records, offset: end, positions };
 }
 
+/** `env K=V …` ahead of a command, so a printed or launched command carries an account's folder. */
+export function envPrefix(env: Record<string, string> | undefined): string[] {
+  const pairs = Object.entries(env ?? {});
+  return pairs.length > 0 ? ['env', ...pairs.map(([k, v]) => `${k}=${v}`)] : [];
+}
+
 export function toJsonl(records: unknown[]): string {
   return records.map((r) => JSON.stringify(r)).join('\n') + '\n';
 }

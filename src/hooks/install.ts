@@ -11,12 +11,14 @@ export function selfArgv(): string[] {
   return [process.execPath, path.resolve(bin)];
 }
 
-export function claudeSettingsPath(): string {
-  return path.join(process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'settings.json');
+/** `dir`: a named account's folder; default: $CLAUDE_CONFIG_DIR or ~/.claude. */
+export function claudeSettingsPath(dir?: string): string {
+  return path.join(dir || process.env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude'), 'settings.json');
 }
 
-export function codexConfigPath(): string {
-  return path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'config.toml');
+/** `dir`: a named account's folder; default: $CODEX_HOME or ~/.codex. */
+export function codexConfigPath(dir?: string): string {
+  return path.join(dir || process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'config.toml');
 }
 
 export function opencodePluginPath(): string {
@@ -265,17 +267,28 @@ async function backupOnce(file: string) {
 
 export type Target = 'claude' | 'codex' | 'opencode';
 
-export async function install(targets: Target[], self = selfArgv()): Promise<string[]> {
+/** A named account's folder for a tool; hooks go into the default folder and every account's. */
+export interface AccountDir {
+  tool: 'claude' | 'codex';
+  dir: string;
+}
+
+const dirsFor = (tool: AccountDir['tool'], accounts: AccountDir[]) => [
+  undefined,
+  ...accounts.filter((a) => a.tool === tool).map((a) => a.dir),
+];
+
+export async function install(targets: Target[], self = selfArgv(), accounts: AccountDir[] = []): Promise<string[]> {
   const done: string[] = [];
-  if (targets.includes('claude')) {
-    const file = claudeSettingsPath();
+  for (const dir of targets.includes('claude') ? dirsFor('claude', accounts) : []) {
+    const file = claudeSettingsPath(dir);
     const settings = JSON.parse(await readOr(file, '{}')) as Settings;
     await backupOnce(file);
     await atomicWrite(file, `${JSON.stringify(withClaudeHook(settings, self), null, 2)}\n`);
     done.push(`Claude Code: SessionEnd hook in ${file}`);
   }
-  if (targets.includes('codex')) {
-    const file = codexConfigPath();
+  for (const dir of targets.includes('codex') ? dirsFor('codex', accounts) : []) {
+    const file = codexConfigPath(dir);
     const toml = await readOr(file, '');
     await backupOnce(file);
     const chained = findNotify(toml.split('\n'));
@@ -293,18 +306,18 @@ export async function install(targets: Target[], self = selfArgv()): Promise<str
   return done;
 }
 
-export async function uninstall(targets: Target[]): Promise<string[]> {
+export async function uninstall(targets: Target[], accounts: AccountDir[] = []): Promise<string[]> {
   const done: string[] = [];
-  if (targets.includes('claude')) {
-    const file = claudeSettingsPath();
+  for (const dir of targets.includes('claude') ? dirsFor('claude', accounts) : []) {
+    const file = claudeSettingsPath(dir);
     const settings = JSON.parse(await readOr(file, '{}')) as Settings;
     if (hasClaudeHook(settings)) {
       await atomicWrite(file, `${JSON.stringify(withoutClaudeHook(settings), null, 2)}\n`);
       done.push(`Claude Code: removed SessionEnd hook from ${file}`);
     }
   }
-  if (targets.includes('codex')) {
-    const file = codexConfigPath();
+  for (const dir of targets.includes('codex') ? dirsFor('codex', accounts) : []) {
+    const file = codexConfigPath(dir);
     const toml = await readOr(file, '');
     if (hasCodexNotify(toml)) {
       await atomicWrite(file, withoutCodexNotify(toml));
@@ -328,4 +341,11 @@ export async function status(): Promise<Record<Target, boolean>> {
     codex: hasCodexNotify(await readOr(codexConfigPath(), '')),
     opencode: isOurPlugin(await readOr(opencodePluginPath(), '')),
   };
+}
+
+/** Whether the hook is in a named account's folder. */
+export async function accountHookInstalled(account: AccountDir): Promise<boolean> {
+  return account.tool === 'claude'
+    ? hasClaudeHook(JSON.parse(await readOr(claudeSettingsPath(account.dir), '{}')) as Settings)
+    : hasCodexNotify(await readOr(codexConfigPath(account.dir), ''));
 }

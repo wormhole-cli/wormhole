@@ -50,6 +50,8 @@ export type Event = z.infer<typeof Event>;
 /** One native session in one tool. */
 export const Segment = z.object({
   tool: Tool,
+  /** Named account (see accounts.json) when not the tool's default login. */
+  account: z.string().optional(),
   nativeId: z.string(),
   path: z.string(),
   startedAt: z.string(),
@@ -61,7 +63,7 @@ export const Segment = z.object({
    */
   eventStart: z.number().int().nonnegative(),
   /** Set when wormhole wrote this segment as a handoff from another tool. */
-  derivedFrom: z.object({ tool: Tool, nativeId: z.string() }).optional(),
+  derivedFrom: z.object({ tool: Tool, account: z.string().optional(), nativeId: z.string() }).optional(),
 });
 export type Segment = z.infer<typeof Segment>;
 
