@@ -11,7 +11,7 @@ import {
   type Target,
   uninstall,
 } from './hooks/install.js';
-import { activeSegment, type Event, TOOLS, Tool } from './model/thread.js';
+import { activeSegment, type Event, eventTool, TOOLS, Tool } from './model/thread.js';
 
 const program = new Command();
 
@@ -121,10 +121,10 @@ program
     const c = ctx();
     const { thread } = await sync(c);
     const events = await c.store.readEvents(thread.id);
-    const owner = (i: number) => thread.segments.findLast((s) => s.eventStart <= i)?.tool ?? '?';
+
     const from = Math.max(0, events.length - opts.limit);
     events.slice(from).forEach((e, k) => {
-      console.log(`${String(from + k).padStart(5)} ${owner(from + k).padEnd(6)} ${describe(e)}`);
+      console.log(`${String(from + k).padStart(5)} ${(eventTool(e, from + k, thread.segments) ?? '?').padEnd(8)} ${describe(e)}`);
     });
   });
 

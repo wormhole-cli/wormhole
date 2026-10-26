@@ -50,6 +50,10 @@ export interface SyncResult {
  * left alone so unrelated history does not leak in.
  */
 export async function sync(ctx: Context, opts: SyncOptions = {}): Promise<SyncResult> {
+  return ctx.store.transaction(ctx.cwd, (store) => syncUnlocked({ ...ctx, store }, opts));
+}
+
+async function syncUnlocked(ctx: Context, opts: SyncOptions): Promise<SyncResult> {
   const thread = await ctx.store.loadOrCreateForCwd(ctx.cwd);
   const refs: NativeRef[] = [];
   for (const [tool, a] of Object.entries(ctx.adapters) as [Tool, ToolAdapter][]) {
@@ -140,6 +144,10 @@ export function missingFrom(seg: Segment, events: Event[]): Event[] | null {
  * otherwise a new session is synthesized from the whole thread.
  */
 export async function switchTo(ctx: Context, to: Tool, opts: SyncOptions = {}): Promise<SwitchResult> {
+  return ctx.store.transaction(ctx.cwd, (store) => switchUnlocked({ ...ctx, store }, to, opts));
+}
+
+async function switchUnlocked(ctx: Context, to: Tool, opts: SyncOptions): Promise<SwitchResult> {
   const target = adapter(ctx, to);
   const { thread, active } = await sync(ctx, opts);
   if (!active) throw new Error(`no Claude Code, Codex or opencode session found for ${ctx.cwd}`);

@@ -8,11 +8,6 @@ import { cliVersion, readJsonlFrom, toJsonl } from './jsonl.js';
 import { CONTINUED, keep, toTurns, type Turn } from './render.js';
 import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.js';
 
-/** How many rollout files detectLatest inspects before giving up. */
-const DETECT_SCAN_LIMIT = 1000;
-/** Matching sessions compared by mtime when picking the one in use. */
-const DETECT_MATCHES = 5;
-
 /** User-role messages Codex injects itself; not things the person typed. */
 const INJECTED_PREFIXES = [
   '<environment_context>',
@@ -41,10 +36,10 @@ export class CodexAdapter implements ToolAdapter {
 
   /**
    * Files are named by start time, but an older session that was resumed later is
-   * the one in use, so the first few matches are compared by mtime.
+   * the one in use, so all matching sessions are compared by mtime.
    */
   async detectLatest(cwd: string): Promise<NativeRef | null> {
-    const matches = await this.matching(cwd, () => true, DETECT_MATCHES);
+    const matches = await this.matching(cwd, () => true, Infinity);
     return matches.reduce<NativeRef | null>((best, r) => (!best || r.updatedAt > best.updatedAt ? r : best), null);
   }
 
@@ -56,12 +51,12 @@ export class CodexAdapter implements ToolAdapter {
   private async matching(cwd: string, accept: (file: string) => boolean, limit: number): Promise<NativeRef[]> {
     const want = path.resolve(cwd);
     const found: NativeRef[] = [];
-    let scanned = 0;
     for await (const file of this.rolloutsNewestFirst()) {
-      if (++scanned > DETECT_SCAN_LIMIT || found.length >= limit) break;
+      if (found.length >= limit) break;
       if (!accept(file)) continue;
       const meta = await readSessionMeta(file);
-      if (!meta || path.resolve(meta.cwd) !== want) continue;
+      // Subagent threads (guardian reviews, spawned agents) are Codex's own helpers, not the conversation.
+      if (!meta || meta.subagent || path.resolve(meta.cwd) !== want) continue;
       const stat = await fs.stat(file);
       found.push({
         tool: 'codex',
@@ -144,7 +139,6 @@ export class CodexAdapter implements ToolAdapter {
   }
 
   async extend(base: NativeRef, events: Event[], ctx: WriteContext): Promise<NativeRef> {
-    const raw = await fs.readFile(base.path, 'utf8');
     const { records } = await readJsonlFrom(base.path);
     const lines = records as CodexLine[];
 
@@ -178,7 +172,13 @@ export class CodexAdapter implements ToolAdapter {
 
     const id = uuidv7(now.getTime());
     // The id appears in session_meta and in per-turn records; a copy under a new id is a fork.
-    const copy = raw.split(base.nativeId).join(id);
+    const copy = toJsonl(lines.map((line) => {
+      const value = structuredClone(line);
+      if (value.type === 'session_meta' && value.payload?.id === base.nativeId) value.payload.id = id;
+      if (value.payload?.session_id === base.nativeId) value.payload.session_id = id;
+      if (value.payload?.thread_id === base.nativeId) value.payload.thread_id = id;
+      return value;
+    }));
     return this.save(now, id, (copy.endsWith('\n') ? copy : `${copy}\n`) + toJsonl(appended));
   }
 
@@ -221,6 +221,8 @@ interface CodexPayload {
   action?: { command?: string[] };
   call_id?: string;
   id?: string;
+  session_id?: string;
+  thread_id?: string;
   output?: unknown;
   message?: string;
 }
@@ -233,7 +235,9 @@ interface CodexLine {
 }
 
 /** session_meta is always the first line; it can be large (base_instructions). */
-async function readSessionMeta(file: string): Promise<{ id: string; cwd: string; timestamp: string } | null> {
+async function readSessionMeta(
+  file: string,
+): Promise<{ id: string; cwd: string; timestamp: string; subagent: boolean } | null> {
   const fh = await fs.open(file, 'r').catch(() => null);
   if (!fh) return null;
   try {
@@ -249,9 +253,10 @@ async function readSessionMeta(file: string): Promise<{ id: string; cwd: string;
       pos += bytesRead;
     }
     const line = JSON.parse(Buffer.concat(chunks).toString('utf8')) as CodexLine;
-    const p = line.payload as { id?: string; cwd?: string; timestamp?: string } | undefined;
+    const p = line.payload as { id?: string; cwd?: string; timestamp?: string; source?: unknown } | undefined;
     if (line.type !== 'session_meta' || !p?.id || !p.cwd) return null;
-    return { id: p.id, cwd: p.cwd, timestamp: p.timestamp ?? line.timestamp ?? '' };
+    const subagent = p.source === 'subagent' || (typeof p.source === 'object' && p.source !== null && 'subagent' in p.source);
+    return { id: p.id, cwd: p.cwd, timestamp: p.timestamp ?? line.timestamp ?? '', subagent };
   } catch {
     return null;
   } finally {

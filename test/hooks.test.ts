@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeAdapter, encodeCwd } from '../src/adapters/claude.js';
+import { CodexAdapter } from '../src/adapters/codex.js';
 import type { Context } from '../src/core.js';
 import { importFromHook, parseClaudeHook, parseCodexNotify } from '../src/hooks/handle.js';
 import {
@@ -16,6 +17,7 @@ import {
   withoutClaudeHook,
   withoutCodexNotify,
 } from '../src/hooks/install.js';
+import { eventTool } from '../src/model/thread.js';
 import { Store } from '../src/store/store.js';
 
 const self = ['/usr/local/bin/node', '/opt/wormhole/bin/wormhole.js'];
@@ -142,11 +144,53 @@ describe('importFromHook', () => {
     expect(await ctx.store.loadForCwd(ctx.cwd)).toBeNull();
   });
 
+  it('skips sessions it cannot find instead of failing', async () => {
+    await ctx.store.loadOrCreateForCwd(ctx.cwd);
+    expect(await importFromHook({ tool: 'claude', cwd: ctx.cwd, session: 'missing' }, ctx)).toBe(0);
+    expect((await ctx.store.loadForCwd(ctx.cwd))!.segments).toEqual([]);
+  });
+
+  it('never adopts a Codex subagent thread', async () => {
+    const home = path.join(root, 'codex');
+    const dir = path.join(home, 'sessions', '2026', '10', '26');
+    await mkdir(dir, { recursive: true });
+    const meta = (id: string, source: unknown) =>
+      `${JSON.stringify({ type: 'session_meta', payload: { id, cwd: ctx.cwd, timestamp: 't', source } })}\n`;
+    await writeFile(path.join(dir, 'rollout-2026-10-26T10-00-00-main.jsonl'), meta('main', 'cli'));
+    await writeFile(path.join(dir, 'rollout-2026-10-26T11-00-00-guard.jsonl'), meta('guard', { subagent: { other: 'guardian' } }));
+    const codex = new CodexAdapter({ home, cliVersion: '0.159.2' });
+    expect((await codex.detectLatest(ctx.cwd))?.nativeId).toBe('main');
+    expect(await codex.locate(ctx.cwd, 'guard')).toBeNull();
+
+    const withCodex: Context = { ...ctx, adapters: { codex } };
+    await ctx.store.loadOrCreateForCwd(ctx.cwd);
+    expect(await importFromHook({ tool: 'codex', cwd: ctx.cwd, session: 'guard' }, withCodex)).toBe(0);
+    expect((await ctx.store.loadForCwd(ctx.cwd))!.segments).toEqual([]);
+  });
+
   it('imports new turns into an existing thread', async () => {
     await ctx.store.loadOrCreateForCwd(ctx.cwd);
     expect(await importFromHook({ tool: 'claude', cwd: ctx.cwd, session: 's1' }, ctx)).toBe(1);
     await appendFile(file, `${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'yo' }] } })}\n`);
     expect(await importFromHook({ tool: 'claude', cwd: ctx.cwd, session: 's1' }, ctx)).toBe(1);
     expect(await importFromHook({ tool: 'claude', cwd: ctx.cwd, session: 's1' }, ctx)).toBe(0);
+  });
+});
+
+describe('eventTool', () => {
+  const segments = [
+    { tool: 'claude' as const, nativeId: 'c', path: '', startedAt: '', importedUpTo: 0, eventStart: 0 },
+    { tool: 'codex' as const, nativeId: 'x', path: '', startedAt: '', importedUpTo: 0, eventStart: 2, derivedFrom: { tool: 'claude' as const, nativeId: 'c' } },
+  ];
+
+  it('labels an event by the session it came from, not by position', () => {
+    // A Claude turn imported after the Codex handoff sits past Codex's eventStart.
+    expect(eventTool({ kind: 'user_text', text: 'late', src: 'claude:c' }, 5, segments)).toBe('claude');
+    expect(eventTool({ kind: 'user_text', text: 'x', src: 'codex:x' }, 5, segments)).toBe('codex');
+  });
+
+  it('falls back to segment ranges for untagged events', () => {
+    expect(eventTool({ kind: 'user_text', text: 'old' }, 1, segments)).toBe('claude');
+    expect(eventTool({ kind: 'user_text', text: 'old' }, 3, segments)).toBe('codex');
   });
 });

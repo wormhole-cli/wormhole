@@ -61,6 +61,16 @@ export function srcKey(seg: { tool: Tool; nativeId: string }): string {
   return `${seg.tool}:${seg.nativeId}`;
 }
 
+/**
+ * The tool an event came from: its `src`, or for events recorded before source
+ * tagging, the segment whose range it falls in.
+ */
+export function eventTool(e: Event, index: number, segments: Segment[]): Tool | undefined {
+  const tagged = Tool.safeParse(e.src?.split(':')[0]);
+  if (tagged.success) return tagged.data;
+  return segments.findLast((s) => s.eventStart <= index)?.tool;
+}
+
 /** One workstream in one project directory, spanning any number of tools. */
 export const Thread = z.object({
   version: z.literal(1),

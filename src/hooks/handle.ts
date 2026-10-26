@@ -37,12 +37,14 @@ export function parseCodexNotify(payload: string | undefined): HookInput | null 
 
 /**
  * Import one session's new turns into its project's thread. Projects without a
- * thread are left alone, so hooks never start recording a project on their own.
+ * thread, and sessions the adapter cannot find, are left alone.
  */
 export async function importFromHook(input: HookInput, base: Context = defaultContext(input.cwd)): Promise<number> {
   if (!(await base.store.loadForCwd(input.cwd))) return 0;
   // Only the reporting tool: probing the others (opencode spawns a CLI) would slow every turn.
   const ctx: Context = { ...base, cwd: input.cwd, adapters: { [input.tool]: base.adapters[input.tool] } };
+  // Tools also report helper threads wormhole does not follow (Codex subagents, unsaved threads).
+  if (!(await base.adapters[input.tool]?.locate(input.cwd, input.session))) return 0;
   const { imported } = await sync(ctx, { tool: input.tool, session: input.session });
   return imported.reduce((n, i) => n + i.events, 0);
 }

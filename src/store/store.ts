@@ -18,7 +18,52 @@ export function threadIdForCwd(cwd: string): string {
 }
 
 export class Store {
-  constructor(private readonly root: string = wormholeHome()) {}
+  constructor(private readonly root: string = wormholeHome(), private readonly unlocked = false) {}
+
+  /** Serialize the complete read/modify/write cycle; journal both files for crash recovery. */
+  async transaction<T>(cwd: string, fn: (store: Store) => Promise<T>): Promise<T> {
+    if (this.unlocked) return fn(this);
+    const id = threadIdForCwd(cwd);
+    return this.withLock(id, async () => {
+      const journal = path.join(this.threadDir(id), 'pending.json');
+      const recover = async () => {
+        const raw = await fs.readFile(journal, 'utf8').catch((err) => {
+          if (err.code === 'ENOENT') return null;
+          throw err;
+        });
+        if (!raw) return;
+        const data = JSON.parse(raw) as Record<string, string>;
+        for (const file of ['events.jsonl', 'thread.json']) {
+          if (data[file] !== undefined) await atomicWrite(path.join(this.threadDir(id), file), data[file]!);
+        }
+        await fs.rm(journal);
+      };
+      await recover();
+      const stage = await fs.mkdtemp(path.join(this.root, '.transaction-'));
+      const staged = new Store(stage, true);
+      try {
+        await fs.mkdir(staged.threadDir(id), { recursive: true });
+        for (const file of ['events.jsonl', 'thread.json']) {
+          await fs.copyFile(path.join(this.threadDir(id), file), path.join(staged.threadDir(id), file)).catch((err) => {
+            if (err.code !== 'ENOENT') throw err;
+          });
+        }
+        const result = await fn(staged);
+        const data: Record<string, string> = {};
+        for (const file of ['events.jsonl', 'thread.json']) {
+          data[file] = await fs.readFile(path.join(staged.threadDir(id), file), 'utf8').catch((err) => {
+            if (err.code === 'ENOENT') return '';
+            throw err;
+          });
+        }
+        await atomicWrite(journal, JSON.stringify(data));
+        await recover();
+        return result;
+      } finally {
+        await fs.rm(stage, { recursive: true, force: true });
+      }
+    });
+  }
 
   threadDir(id: string): string {
     return path.join(this.root, 'threads', id);
@@ -91,6 +136,7 @@ export class Store {
   }
 
   private async withLock<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    if (this.unlocked) return fn();
     const lockDir = path.join(this.threadDir(id), '.lock');
     await fs.mkdir(path.dirname(lockDir), { recursive: true });
     const deadline = Date.now() + LOCK_TIMEOUT_MS;
@@ -109,9 +155,14 @@ export class Store {
         await new Promise((r) => setTimeout(r, LOCK_RETRY_MS));
       }
     }
+    const heartbeat = setInterval(() => {
+      const now = new Date();
+      void fs.utimes(lockDir, now, now).catch(() => {});
+    }, 5000);
     try {
       return await fn();
     } finally {
+      clearInterval(heartbeat);
       await fs.rm(lockDir, { recursive: true, force: true });
     }
   }

@@ -79,9 +79,15 @@ export function findNotify(lines: string[]): NotifyLine | null {
     if (/^\s*\[/.test(line)) return null;
     if (!/^\s*notify\s*=/.test(line)) continue;
     let end = i + 1;
-    let text = line;
-    while (!/\]\s*(#.*)?$/.test(text) && end < lines.length) text += `\n${lines[end++]}`;
-    return { start: i, end, argv: parseTomlStrings(text.slice(text.indexOf('=') + 1)) };
+    for (;;) {
+      const text = lines.slice(i, end).join('\n');
+      try {
+        return { start: i, end, argv: parseTomlStrings(text.slice(text.indexOf('=') + 1)) };
+      } catch (err) {
+        if (end >= lines.length) throw err;
+        end++;
+      }
+    }
   }
   return null;
 }
@@ -89,10 +95,54 @@ export function findNotify(lines: string[]): NotifyLine | null {
 /** Strings of a TOML array of basic ("…") or literal ('…') strings. */
 export function parseTomlStrings(value: string): string[] {
   const out: string[] = [];
-  const re = /"((?:[^"\\]|\\.)*)"|'([^']*)'/g;
-  for (const m of value.matchAll(re)) {
-    out.push(m[1] !== undefined ? (JSON.parse(`"${m[1]}"`) as string) : m[2]!);
+  let i = 0;
+  const skip = () => {
+    while (i < value.length) {
+      if (/\s/.test(value[i]!)) { i++; continue; }
+      if (value[i] === '#') { while (i < value.length && value[i] !== '\n') i++; continue; }
+      break;
+    }
+  };
+  skip();
+  if (value[i++] !== '[') throw new Error('notify must be a TOML string array');
+  for (;;) {
+    skip();
+    if (value[i] === ']') { i++; break; }
+    const quote = value[i++];
+    if (quote !== '"' && quote !== "'") throw new Error('invalid notify string');
+    const multiline = value.slice(i, i + 2) === quote.repeat(2);
+    if (multiline) i += 2;
+    if (multiline && value[i] === '\n') i++;
+    let text = '', closed = false;
+    while (i < value.length) {
+      if (value.slice(i, i + (multiline ? 3 : 1)) === quote.repeat(multiline ? 3 : 1)) {
+        i += multiline ? 3 : 1; closed = true; break;
+      }
+      const ch = value[i++]!;
+      if (!multiline && /[\r\n]/.test(ch)) throw new Error('newline in notify string');
+      if (ch !== '\\' || quote === "'") { text += ch; continue; }
+      const esc = value[i++];
+      const escapes: Record<string, string> = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+      if (esc && esc in escapes) text += escapes[esc];
+      else if (esc === 'u' || esc === 'U') {
+        const n = esc === 'u' ? 4 : 8;
+        const hex = value.slice(i, i + n);
+        if (!new RegExp(`^[0-9a-fA-F]{${n}}$`).test(hex)) throw new Error('invalid TOML unicode escape');
+        const cp = Number.parseInt(hex, 16);
+        if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) throw new Error('invalid TOML unicode scalar');
+        text += String.fromCodePoint(cp); i += n;
+      } else if (multiline && esc && /\s/.test(esc)) {
+        while (i < value.length && /\s/.test(value[i]!)) i++;
+      } else throw new Error('invalid TOML escape');
+    }
+    if (!closed) throw new Error('unterminated notify string');
+    out.push(text);
+    skip();
+    if (value[i] === ']') { i++; break; }
+    if (value[i++] !== ',') throw new Error('expected comma in notify');
   }
+  skip();
+  if (i !== value.length) throw new Error('unexpected text after notify');
   return out;
 }
 

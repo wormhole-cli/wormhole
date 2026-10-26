@@ -65,9 +65,12 @@ export class ClaudeAdapter implements ToolAdapter {
   }
 
   async read(ref: NativeRef, fromOffset = 0): Promise<ReadResult> {
-    const { records, offset } = await readJsonlFrom(ref.path, fromOffset);
+    // Resolve the selected branch from the complete graph, then apply the byte cursor.
+    const { records, offset, positions } = await readJsonlFrom(ref.path);
+    const fresh = new Set(records.filter((_, i) => positions[i]! >= fromOffset));
+    const selected = selectedBranch(records as ClaudeRecord[]).filter((r) => fresh.has(r));
     const events: Event[] = [];
-    for (const rec of records as ClaudeRecord[]) {
+    for (const rec of selected) {
       // API error notices (model "<synthetic>") are Claude Code UI, not part of the conversation.
       if (rec.isSidechain || rec.isMeta || rec.isApiErrorMessage) continue;
       const ts = rec.timestamp;
@@ -129,9 +132,8 @@ export class ClaudeAdapter implements ToolAdapter {
   }
 
   async extend(base: NativeRef, events: Event[], ctx: WriteContext): Promise<NativeRef> {
-    const raw = await fs.readFile(base.path, 'utf8');
     const { records } = await readJsonlFrom(base.path);
-    const main = (records as ClaudeRecord[]).filter((r) => !r.isSidechain);
+    const main = selectedBranch(records as ClaudeRecord[]);
     const leaf = main.findLast((r) => r.uuid)?.uuid ?? null;
     const lastMessage = main.findLast((r) => (r.type === 'user' || r.type === 'assistant') && !r.isApiErrorMessage);
 
@@ -153,7 +155,7 @@ export class ClaudeAdapter implements ToolAdapter {
     const sessionId = randomUUID();
     const appended = await this.records(turns, sessionId, leaf, ctx, closing);
     // Session ids appear in every record; a copy under a new id is how Claude itself forks.
-    const copy = raw.split(base.nativeId).join(sessionId);
+    const copy = toJsonl(main.map((r) => ({ ...r, sessionId })));
     return this.save(sessionId, ctx.cwd, (copy.endsWith('\n') ? copy : `${copy}\n`) + toJsonl(appended));
   }
 
@@ -235,6 +237,8 @@ interface ClaudeBlock {
 interface ClaudeRecord {
   type: string;
   uuid?: string;
+  parentUuid?: string | null;
+  leafUuid?: string;
   timestamp?: string;
   isSidechain?: boolean;
   isMeta?: boolean;
@@ -268,4 +272,19 @@ function summarizeInput(input: unknown): string {
     }
   }
   return JSON.stringify(input ?? {});
+}
+
+/** Follow the latest selected leaf, rather than importing abandoned sibling branches. */
+function selectedBranch(records: ClaudeRecord[]): ClaudeRecord[] {
+  const main = records.filter((r) => !r.isSidechain);
+  const byId = new Map(main.filter((r) => r.uuid).map((r) => [r.uuid!, r]));
+  const tail = main.findLast((r) => r.leafUuid || ((r.type === 'user' || r.type === 'assistant') && r.uuid));
+  let id = tail?.leafUuid ?? tail?.uuid;
+  if (!id) return main; // Legacy transcripts without linked records.
+  const selected = new Set<string>();
+  while (id && !selected.has(id)) {
+    selected.add(id);
+    id = byId.get(id)?.parentUuid ?? undefined;
+  }
+  return main.filter((r) => !r.uuid || selected.has(r.uuid));
 }
