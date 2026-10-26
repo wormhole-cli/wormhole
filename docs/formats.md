@@ -22,8 +22,8 @@ Newer writers add `ordinal` per line, `turn_context`, `event_msg`, `world_state`
 (with `encrypted_content`, OpenAI only), `custom_tool_call` / `function_call` + `*_output`
 paired by `call_id`. Readers must tolerate all of these; the writer emits only the minimal set.
 
-Not yet checked: whether a never-resumed synthetic rollout appears in the interactive
-`codex resume` picker (resume by id works).
+Pickers (verified 2026-10-26, CLI 0.164): a never-resumed wormhole rollout is listed by the
+interactive `codex resume` picker under its cwd, titled by its first user message.
 
 ### Codex Desktop (verified 2026-10-26, app-server 0.164)
 
@@ -52,7 +52,9 @@ No index file; `claude -r <id>` looks in the current directory's encoded folder.
 **Spike result:** a 2-record file (`user` → `assistant`, linked by `parentUuid`) is found and
 loaded by `claude -p -r <id>`; a made-up id gives "No conversation found". Verified 2026-10-26:
 `claude -p -r` answers from both a session wormhole synthesized from Codex and a wormhole copy of
-a native Claude session extended with Codex turns.
+a native Claude session extended with Codex turns. With no id, `claude -c` picks the wormhole copy
+as the newest session in the folder, so it is listed in the `claude -r` picker too. wormhole writes
+transcripts `0600`, like Claude Code.
 
 Claude Desktop: `claude://resume?session=<uuid>` imports a CLI session into the app
 (`importCliSession`, logged as "Imported CLI session … as Desktop session local_…"). Verified: the

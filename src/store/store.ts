@@ -237,9 +237,9 @@ async function lastByte(file: string): Promise<string> {
   }
 }
 
-export async function atomicWrite(file: string, content: string): Promise<void> {
+export async function atomicWrite(file: string, content: string, mode?: number): Promise<void> {
   await fs.mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.${randomUUID().slice(0, 8)}.tmp`;
-  await fs.writeFile(tmp, content, 'utf8');
+  await fs.writeFile(tmp, content, { encoding: 'utf8', mode });
   await fs.rename(tmp, file);
 }

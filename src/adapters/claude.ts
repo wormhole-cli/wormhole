@@ -213,7 +213,8 @@ export class ClaudeAdapter implements ToolAdapter {
 
   private async save(sessionId: string, cwd: string, content: string): Promise<NativeRef> {
     const file = path.join(this.projectDir(cwd), `${sessionId}.jsonl`);
-    await atomicWrite(file, content);
+    // Private like Claude Code's own transcripts.
+    await atomicWrite(file, content, 0o600);
     const now = new Date().toISOString();
     return { tool: 'claude', nativeId: sessionId, path: file, startedAt: now, updatedAt: now };
   }

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -91,6 +91,7 @@ describe('ClaudeAdapter', () => {
   it('writes a linked, alternating transcript in the project folder', async () => {
     const ref = await claude().write(sample, { cwd, gitBranch: 'main', brief: 'BRIEF' });
     expect(ref.path).toBe(path.join(root, 'projects', encodeCwd(cwd), `${ref.nativeId}.jsonl`));
+    expect((await stat(ref.path)).mode & 0o777).toBe(0o600);
     const recs = await lines(ref.path);
     expect(recs.map((r) => r.type)).toEqual(['user', 'assistant', 'user', 'assistant']);
     expect(recs[0].parentUuid).toBeNull();
