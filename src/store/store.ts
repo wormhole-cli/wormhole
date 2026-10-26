@@ -228,7 +228,9 @@ async function recover(dir: string, journal: string): Promise<void> {
   const events = path.join(dir, 'events.jsonl');
   if (data.base !== undefined) {
     if (data.append) {
-      const handle = await fs.open(events, 'a+');
+      // Create it if missing, then reopen read-write: Windows refuses to truncate a file opened for append.
+      await (await fs.open(events, 'a')).close();
+      const handle = await fs.open(events, 'r+');
       try {
         await handle.truncate(data.base);
         await handle.write(data.append, data.base, 'utf8');

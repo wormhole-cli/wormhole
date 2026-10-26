@@ -25,7 +25,7 @@
     "url": "git+https://github.com/ashutosh091/wormhole.git"
   },
   "license": "MIT",
-  "author": "Ashutosh Kumar",
+  "author": "ashutosh091 (https://github.com/ashutosh091)",
   "type": "module",
   "bin": {
     "wormhole": "bin/wormhole.js",
