@@ -24,9 +24,15 @@ tool-neutral events.
 `switch <tool>`:
 
 1. imports new turns from every session the thread tracks, and adopts the session currently in use;
-2. writes a new native session for the target tool: user and assistant text verbatim, each tool call
-   flattened to one line (`▸ Bash: npm test → error: …`), then a handoff brief (goal, latest request,
-   open tasks, files touched, git state);
+2. writes a native session for the target tool:
+   - **switching back** to a tool the thread already used: a copy of that tool's last session (under a
+     new id, the original untouched) with only the turns from the other tools appended, so its own
+     native tool calls and results survive;
+   - **first time** in a tool: a new session holding the whole thread;
+
+   in both cases foreign turns carry user and assistant text verbatim, each tool call flattened to one
+   line (`▸ Bash: npm test → error: …`), then a handoff brief (goal, latest request, open tasks, files
+   touched, git state). A tool call the copied session left open is closed with an error result first;
 3. opens it with `claude --resume <id>` or `codex resume <id>`.
 
 Reasoning is never copied (Claude thinking signatures and Codex encrypted reasoning only verify with

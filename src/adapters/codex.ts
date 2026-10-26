@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { Event } from '../model/thread.js';
 import { atomicWrite } from '../store/store.js';
 import { cliVersion, readJsonlFrom, toJsonl } from './jsonl.js';
-import { keep, toTurns } from './render.js';
+import { CONTINUED, keep, toTurns, type Turn } from './render.js';
 import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.js';
 
 /** How many rollout files detectLatest inspects before giving up. */
@@ -125,35 +125,67 @@ export class CodexAdapter implements ToolAdapter {
     const now = new Date();
     const id = uuidv7(now.getTime());
     const iso = now.toISOString();
-    const cwd = path.resolve(ctx.cwd);
     const version = this.opts.cliVersion ?? (await cliVersion('codex', '0.0.0'));
-    const records: unknown[] = [
-      {
+    const meta = {
+      timestamp: iso,
+      type: 'session_meta',
+      payload: {
+        id,
         timestamp: iso,
-        type: 'session_meta',
-        payload: {
-          id,
-          timestamp: iso,
-          cwd,
-          originator: 'codex_cli_rs',
-          cli_version: version,
-          source: 'cli',
-          model_provider: 'openai',
-          ...(ctx.gitBranch ? { git: { branch: ctx.gitBranch } } : {}),
-        },
+        cwd: path.resolve(ctx.cwd),
+        originator: 'codex_cli_rs',
+        cli_version: version,
+        source: 'cli',
+        model_provider: 'openai',
+        ...(ctx.gitBranch ? { git: { branch: ctx.gitBranch } } : {}),
       },
-      ...toTurns(events, ctx.brief).map((turn) => ({
+    };
+    return this.save(now, id, toJsonl([meta, ...messageLines(toTurns(events, ctx.brief), iso)]));
+  }
+
+  async extend(base: NativeRef, events: Event[], ctx: WriteContext): Promise<NativeRef> {
+    const raw = await fs.readFile(base.path, 'utf8');
+    const { records } = await readJsonlFrom(base.path);
+    const lines = records as CodexLine[];
+
+    // A call left without output (the session was interrupted) makes the Responses API
+    // reject the history, so the copy closes it before anything else is appended.
+    const answered = new Set(
+      lines.filter((l) => l.type === 'response_item' && /_output$/.test(l.payload?.type ?? '')).map((l) => l.payload?.call_id),
+    );
+    const now = new Date();
+    const iso = now.toISOString();
+    const closing = lines
+      .filter((l) => l.type === 'response_item' && /^(function_call|custom_tool_call|local_shell_call)$/.test(l.payload?.type ?? ''))
+      .filter((l) => l.payload?.call_id && !answered.has(l.payload.call_id))
+      .map((l) => ({
         timestamp: iso,
         type: 'response_item',
         payload: {
-          type: 'message',
-          role: turn.role,
-          content: [{ type: turn.role === 'user' ? 'input_text' : 'output_text', text: turn.text }],
+          type: l.payload!.type === 'custom_tool_call' ? 'custom_tool_call_output' : 'function_call_output',
+          call_id: l.payload!.call_id,
+          output: 'Not completed: the session was handed off to another tool.',
         },
-      })),
-    ];
+      }));
+    const appended: Record<string, unknown>[] = [...closing, ...messageLines(toTurns(events, ctx.brief, CONTINUED), iso)];
+
+    // Newer writers number every line; keep the sequence going when they do.
+    const ordinals = lines.map((l) => l.ordinal).filter((o): o is number => typeof o === 'number');
+    if (ordinals.length > 0) {
+      let next = Math.max(...ordinals) + 1;
+      for (const line of appended) line.ordinal = next++;
+    }
+
+    const id = uuidv7(now.getTime());
+    // The id appears in session_meta and in per-turn records; a copy under a new id is a fork.
+    const copy = raw.split(base.nativeId).join(id);
+    return this.save(now, id, (copy.endsWith('\n') ? copy : `${copy}\n`) + toJsonl(appended));
+  }
+
+  private async save(now: Date, id: string, content: string): Promise<NativeRef> {
     const file = path.join(this.home, 'sessions', ...datePath(now), `rollout-${localStamp(now)}-${id}.jsonl`);
-    await atomicWrite(file, toJsonl(records));
+    await atomicWrite(file, content);
+    const iso = now.toISOString();
     return { tool: 'codex', nativeId: id, path: file, startedAt: iso, updatedAt: iso };
   }
 
@@ -195,6 +227,7 @@ interface CodexPayload {
 
 interface CodexLine {
   timestamp?: string;
+  ordinal?: number;
   type: string;
   payload?: CodexPayload;
 }
@@ -224,6 +257,18 @@ async function readSessionMeta(file: string): Promise<{ id: string; cwd: string;
   } finally {
     await fh.close();
   }
+}
+
+function messageLines(turns: Turn[], iso: string): Record<string, unknown>[] {
+  return turns.map((turn) => ({
+    timestamp: iso,
+    type: 'response_item',
+    payload: {
+      type: 'message',
+      role: turn.role,
+      content: [{ type: turn.role === 'user' ? 'input_text' : 'output_text', text: turn.text }],
+    },
+  }));
 }
 
 function contentText(content: unknown): string {

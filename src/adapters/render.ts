@@ -5,6 +5,9 @@ export interface Turn {
   text: string;
 }
 
+/** Opens appended turns that start with the other tool's reply. */
+export const CONTINUED = '[The conversation continued in another tool:]';
+
 const INPUT_MAX = 200;
 const RESULT_MAX = 300;
 
@@ -26,7 +29,11 @@ export function summarizeOutput(text: string, max = RESULT_MAX): string {
  * with a user turn. Tool calls become assistant lines ("▸ Bash: ls → ok …") so the
  * target transcript carries no foreign tool ids or tool schemas.
  */
-export function toTurns(events: Event[], brief?: string): Turn[] {
+export function toTurns(
+  events: Event[],
+  brief?: string,
+  opener = '[Conversation imported by wormhole; it continues below.]',
+): Turn[] {
   const turns: Turn[] = [];
   const pending = new Map<string, number>(); // callId → index into lines of current assistant turn
   let lines: string[] = [];
@@ -82,7 +89,7 @@ export function toTurns(events: Event[], brief?: string): Turn[] {
     push(turns, 'assistant', 'Understood. I have the context above and am ready to continue.');
   }
   if (turns[0]?.role === 'assistant') {
-    turns.unshift({ role: 'user', text: '[Conversation imported by wormhole; it continues below.]' });
+    turns.unshift({ role: 'user', text: opener });
   }
   return turns;
 }

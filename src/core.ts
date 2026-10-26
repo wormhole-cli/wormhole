@@ -4,7 +4,7 @@ import { CodexAdapter } from './adapters/codex.js';
 import type { NativeRef, ToolAdapter } from './adapters/types.js';
 import { buildBrief } from './handoff/brief.js';
 import { type GitInfo, gitInfo } from './handoff/git.js';
-import type { Thread, Tool } from './model/thread.js';
+import { type Event, type Segment, srcKey, type Thread, type Tool } from './model/thread.js';
 import { Store } from './store/store.js';
 
 export type Adapters = Partial<Record<Tool, ToolAdapter>>;
@@ -69,7 +69,11 @@ export async function sync(ctx: Context, opts: SyncOptions = {}): Promise<SyncRe
     const seg = thread.segments.find((s) => s.tool === ref.tool && s.nativeId === ref.nativeId);
     if (!seg && ref !== active) continue;
     const { events, offset } = await adapter(ctx, ref.tool).read(ref, seg?.importedUpTo ?? 0);
-    const start = await ctx.store.appendEvents(thread.id, events);
+    const src = srcKey(ref);
+    const start = await ctx.store.appendEvents(
+      thread.id,
+      events.map((e) => ({ ...e, src })),
+    );
     if (seg) {
       seg.importedUpTo = offset;
     } else {
@@ -88,41 +92,76 @@ export async function sync(ctx: Context, opts: SyncOptions = {}): Promise<SyncRe
   return { thread, active, imported };
 }
 
-export async function makeBrief(ctx: Context, thread: Thread, to: Tool, git?: GitInfo | null): Promise<string> {
+export async function makeBrief(
+  ctx: Context,
+  thread: Thread,
+  to: Tool,
+  git?: GitInfo | null,
+  continuing = false,
+): Promise<string> {
   const events = await ctx.store.readEvents(thread.id);
   const from = thread.segments.map((s) => s.tool).filter((t) => t !== to);
-  return buildBrief({ events, from, to, git: git === undefined ? await gitInfo(ctx.cwd) : git });
+  return buildBrief({ events, from, to, git: git === undefined ? await gitInfo(ctx.cwd) : git, continuing });
 }
 
 export interface SwitchResult {
   ref: NativeRef;
-  /** True when the target already held the active session, so nothing was written. */
-  reused: boolean;
+  /**
+   * resumed: the target already held the active session, nothing written.
+   * extended: a copy of the target's last session with only the other tools' turns added.
+   * synthesized: a new session holding the whole thread.
+   */
+  mode: 'resumed' | 'extended' | 'synthesized';
   from: NativeRef | null;
+  /** For extended: the session that was copied. */
+  base?: NativeRef;
 }
 
-/** Synthesize a session in `to` that carries the whole thread, and record it. */
+/**
+ * Turns the target's native session `seg` does not hold yet: everything after what
+ * it covers that some other session contributed. Null when events predate source
+ * tagging, so the caller falls back to a full synthesis.
+ */
+export function missingFrom(seg: Segment, events: Event[]): Event[] | null {
+  if (events.some((e) => !e.src)) return null;
+  const covered = seg.derivedFrom ? seg.eventStart : 0;
+  const own = srcKey(seg);
+  return events.filter((e, i) => i >= covered && e.src !== own);
+}
+
+/**
+ * Hand the thread to `to`. When `to` already has a session in this thread, a copy of
+ * it is extended with what happened elsewhere, so its native tool calls survive;
+ * otherwise a new session is synthesized from the whole thread.
+ */
 export async function switchTo(ctx: Context, to: Tool, opts: SyncOptions = {}): Promise<SwitchResult> {
   const target = adapter(ctx, to);
   const { thread, active } = await sync(ctx, opts);
   if (!active) throw new Error(`no Claude Code or Codex session found for ${ctx.cwd}`);
-  if (active.tool === to) return { ref: active, reused: true, from: active };
+  if (active.tool === to) return { ref: active, mode: 'resumed', from: active };
 
   const events = await ctx.store.readEvents(thread.id);
+  const last = thread.segments.findLast((s) => s.tool === to);
+  const delta = last ? missingFrom(last, events) : null;
+  const base = last && delta ? ((await target.locate(ctx.cwd, last.nativeId)) ?? undefined) : undefined;
+
   const git = await gitInfo(ctx.cwd);
-  const brief = await makeBrief(ctx, thread, to, git);
-  const ref = await target.write(events, { cwd: ctx.cwd, gitBranch: git?.branch, brief });
+  const brief = await makeBrief(ctx, thread, to, git, base !== undefined);
+  const wctx = { cwd: ctx.cwd, gitBranch: git?.branch, brief };
+  const ref = base && delta ? await target.extend(base, delta, wctx) : await target.write(events, wctx);
+  const mode = base ? 'extended' : 'synthesized';
+
   const { size } = await fs.stat(ref.path);
   thread.segments.push({
     tool: to,
     nativeId: ref.nativeId,
     path: ref.path,
     startedAt: ref.startedAt,
-    // The synthesized prefix is already in the thread; only later turns get imported.
+    // Everything written so far is already in the thread; only later turns get imported.
     importedUpTo: size,
     eventStart: events.length,
     derivedFrom: { tool: active.tool, nativeId: active.nativeId },
   });
   await ctx.store.save(thread);
-  return { ref, reused: false, from: active };
+  return { ref, mode, from: active, base };
 }

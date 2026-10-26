@@ -11,22 +11,32 @@ export interface BriefInput {
   from: Tool[];
   to: Tool;
   git: GitInfo | null;
+  /** The target's own earlier session is being continued, not a fresh import. */
+  continuing?: boolean;
 }
 
 /**
  * Deterministic handoff note, appended as the last user turn of the synthesized
  * session so the target model reads it first on resume.
  */
-export function buildBrief({ events, from, to, git }: BriefInput): string {
+export function buildBrief({ events, from, to, git, continuing }: BriefInput): string {
   const users = events.filter((e) => e.kind === 'user_text');
   const lastReply = events.findLast((e) => e.kind === 'assistant_text');
   const sources = [...new Set(from)].map((t) => TOOL_NAMES[t]).join(' and ') || 'another tool';
 
-  const out: string[] = [
-    `[wormhole handoff] You are ${TOOL_NAMES[to]}, continuing work that was started in ${sources}.`,
-    'The conversation above was imported. Lines like "▸ Name: input → ok: result" record tool calls the',
-    'other tool made; they are history, not tools you can call. Re-read files before editing them.',
-  ];
+  const out: string[] = continuing
+    ? [
+        `[wormhole handoff] You are ${TOOL_NAMES[to]}, back in this session after work continued in ${sources}.`,
+        'The turns after your last reply were imported from there.',
+      ]
+    : [
+        `[wormhole handoff] You are ${TOOL_NAMES[to]}, continuing work that was started in ${sources}.`,
+        'The conversation above was imported.',
+      ];
+  out.push(
+    'Lines like "▸ Name: input → ok: result" record tool calls the other tool made; they are history,',
+    'not tools you can call. Re-read files before editing them.',
+  );
 
   if (users[0]) out.push('', '## Original goal', oneLine(users[0].text, 600));
   const latest = users.at(-1);

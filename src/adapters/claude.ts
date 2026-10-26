@@ -5,7 +5,7 @@ import path from 'node:path';
 import type { Event } from '../model/thread.js';
 import { atomicWrite } from '../store/store.js';
 import { cliVersion, newestByMtime, readJsonlFrom, toJsonl } from './jsonl.js';
-import { keep, toTurns } from './render.js';
+import { CONTINUED, keep, toTurns, type Turn } from './render.js';
 import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.js';
 
 /** Tools whose input names the file they change. */
@@ -124,11 +124,53 @@ export class ClaudeAdapter implements ToolAdapter {
 
   async write(events: Event[], ctx: WriteContext): Promise<NativeRef> {
     const sessionId = randomUUID();
+    const records = await this.records(toTurns(events, ctx.brief), sessionId, null, ctx);
+    return this.save(sessionId, ctx.cwd, toJsonl(records));
+  }
+
+  async extend(base: NativeRef, events: Event[], ctx: WriteContext): Promise<NativeRef> {
+    const raw = await fs.readFile(base.path, 'utf8');
+    const { records } = await readJsonlFrom(base.path);
+    const main = (records as ClaudeRecord[]).filter((r) => !r.isSidechain);
+    const leaf = main.findLast((r) => r.uuid)?.uuid ?? null;
+    const lastMessage = main.findLast((r) => (r.type === 'user' || r.type === 'assistant') && !r.isApiErrorMessage);
+
+    // A tool_use left without its result (the session was interrupted) makes the API reject
+    // the history, so the copy closes it before anything else is appended.
+    const results = new Set(main.flatMap((r) => blocks(r).filter((b) => b.type === 'tool_result').map((b) => b.tool_use_id)));
+    const orphans = main.flatMap((r) => blocks(r).filter((b) => b.type === 'tool_use' && b.id && !results.has(b.id)));
+    const closing: ClaudeBlock[] = orphans.map((b) => ({
+      type: 'tool_result',
+      tool_use_id: b.id,
+      content: 'Not completed: the session was handed off to another tool.',
+      is_error: true,
+    }));
+
+    const turns = toTurns(events, ctx.brief, CONTINUED);
+    if (closing.length === 0 && lastMessage?.type === 'user') {
+      turns.unshift({ role: 'assistant', text: '(The session continued in another tool; its turns follow.)' });
+    }
+    const sessionId = randomUUID();
+    const appended = await this.records(turns, sessionId, leaf, ctx, closing);
+    // Session ids appear in every record; a copy under a new id is how Claude itself forks.
+    const copy = raw.split(base.nativeId).join(sessionId);
+    return this.save(sessionId, ctx.cwd, (copy.endsWith('\n') ? copy : `${copy}\n`) + toJsonl(appended));
+  }
+
+  /** Linked records for turns; `lead` blocks open the first user record. */
+  private async records(
+    turns: Turn[],
+    sessionId: string,
+    parent: string | null,
+    ctx: WriteContext,
+    lead: ClaudeBlock[] = [],
+  ): Promise<unknown[]> {
     const version = this.opts.version ?? (await cliVersion('claude', '2.0.0'));
     const cwd = path.resolve(ctx.cwd);
     const base = Date.now();
-    let parentUuid: string | null = null;
-    const records = toTurns(events, ctx.brief).map((turn, i) => {
+    let parentUuid = parent;
+    if (lead.length > 0 && turns[0]?.role !== 'user') turns = [{ role: 'user', text: '' }, ...turns];
+    return turns.map((turn, i) => {
       const uuid = randomUUID();
       const common = {
         parentUuid,
@@ -143,27 +185,35 @@ export class ClaudeAdapter implements ToolAdapter {
         timestamp: new Date(base + i).toISOString(),
       };
       parentUuid = uuid;
-      return turn.role === 'user'
-        ? { ...common, type: 'user', message: { role: 'user', content: turn.text } }
-        : {
-            ...common,
-            type: 'assistant',
-            message: {
-              id: `msg_wormhole_${uuid.replace(/-/g, '').slice(0, 20)}`,
-              type: 'message',
-              role: 'assistant',
-              model: 'wormhole-import',
-              content: [{ type: 'text', text: turn.text }],
-              stop_reason: 'end_turn',
-              stop_sequence: null,
-              usage: { input_tokens: 0, output_tokens: 0 },
-            },
-          };
+      if (turn.role === 'user') {
+        const content =
+          i === 0 && lead.length > 0
+            ? [...lead, ...(turn.text ? [{ type: 'text', text: turn.text }] : [])]
+            : turn.text;
+        return { ...common, type: 'user', message: { role: 'user', content } };
+      }
+      return {
+        ...common,
+        type: 'assistant',
+        message: {
+          id: `msg_wormhole_${uuid.replace(/-/g, '').slice(0, 20)}`,
+          type: 'message',
+          role: 'assistant',
+          model: 'wormhole-import',
+          content: [{ type: 'text', text: turn.text }],
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 0, output_tokens: 0 },
+        },
+      };
     });
+  }
+
+  private async save(sessionId: string, cwd: string, content: string): Promise<NativeRef> {
     const file = path.join(this.projectDir(cwd), `${sessionId}.jsonl`);
-    await atomicWrite(file, toJsonl(records));
-    const startedAt = new Date(base).toISOString();
-    return { tool: 'claude', nativeId: sessionId, path: file, startedAt, updatedAt: startedAt };
+    await atomicWrite(file, content);
+    const now = new Date().toISOString();
+    return { tool: 'claude', nativeId: sessionId, path: file, startedAt: now, updatedAt: now };
   }
 
   launchArgs(ref: NativeRef): string[] {
@@ -184,12 +234,18 @@ interface ClaudeBlock {
 
 interface ClaudeRecord {
   type: string;
+  uuid?: string;
   timestamp?: string;
   isSidechain?: boolean;
   isMeta?: boolean;
   isCompactSummary?: boolean;
   isApiErrorMessage?: boolean;
   message?: { role: string; content?: string | ClaudeBlock[] };
+}
+
+function blocks(rec: ClaudeRecord): ClaudeBlock[] {
+  const content = rec.message?.content;
+  return Array.isArray(content) ? content : [];
 }
 
 function blocksText(content: string | ClaudeBlock[] | undefined): string {

@@ -32,6 +32,11 @@ export interface ToolAdapter {
   read(ref: NativeRef, fromOffset?: number): Promise<ReadResult>;
   /** Synthesize a new, resumable native session from neutral events. */
   write(events: Event[], ctx: WriteContext): Promise<NativeRef>;
+  /**
+   * Copy an existing native session under a new id and append events to the copy.
+   * The original is never modified; the copy keeps its native tool calls intact.
+   */
+  extend(base: NativeRef, events: Event[], ctx: WriteContext): Promise<NativeRef>;
   /** argv that reopens the session interactively. */
   launchArgs(ref: NativeRef): string[];
 }

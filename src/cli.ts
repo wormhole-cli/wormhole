@@ -1,6 +1,6 @@
 import { Command, InvalidArgumentError, Option } from 'commander';
 import { oneLine } from './adapters/render.js';
-import { adapter, type Context, defaultContext, makeBrief, switchTo, sync } from './core.js';
+import { adapter, type Context, defaultContext, makeBrief, type SwitchResult, switchTo, sync } from './core.js';
 import { launch, shellLine } from './launch.js';
 import { activeSegment, type Event, TOOLS, Tool } from './model/thread.js';
 
@@ -82,10 +82,9 @@ program
   .action(async (to: Tool, opts: { from?: Tool; session?: string; launch: boolean }) => {
     if (opts.session && !opts.from) throw new InvalidArgumentError('--session needs --from');
     const c = ctx();
-    const { ref, reused, from } = await switchTo(c, to, { tool: opts.from, session: opts.session });
-    if (reused) console.log(`${to} already holds the active session ${ref.nativeId}; resuming it.`);
-    else console.log(`Handed off ${from!.tool} ${from!.nativeId} → ${to} ${ref.nativeId}`);
-    await run(c, adapter(c, to).launchArgs(ref), !opts.launch);
+    const result = await switchTo(c, to, { tool: opts.from, session: opts.session });
+    report(result, to);
+    await run(c, adapter(c, to).launchArgs(result.ref), !opts.launch);
   });
 
 program
@@ -96,9 +95,9 @@ program
   .action(async (tool: Tool | undefined, opts: { launch: boolean }) => {
     const c = ctx();
     if (tool) {
-      const { ref, reused, from } = await switchTo(c, tool);
-      if (!reused) console.log(`Handed off ${from!.tool} ${from!.nativeId} → ${tool} ${ref.nativeId}`);
-      return run(c, adapter(c, tool).launchArgs(ref), !opts.launch);
+      const result = await switchTo(c, tool);
+      report(result, tool);
+      return run(c, adapter(c, tool).launchArgs(result.ref), !opts.launch);
     }
     const { active } = await sync(c);
     if (!active) throw new Error(`no Claude Code or Codex session found for ${c.cwd}`);
@@ -129,6 +128,19 @@ program
     const { thread } = await sync(c);
     console.log(await makeBrief(c, thread, opts.to));
   });
+
+function report({ ref, mode, from, base }: SwitchResult, to: Tool) {
+  if (mode === 'resumed') {
+    console.log(`${to} already holds the active session ${ref.nativeId}; resuming it.`);
+    return;
+  }
+  console.log(`Handed off ${from!.tool} ${from!.nativeId} → ${to} ${ref.nativeId}`);
+  console.log(
+    mode === 'extended'
+      ? `  continues a copy of ${to} ${base!.nativeId} with only the newer turns added`
+      : '  new session holding the whole thread',
+  );
+}
 
 function describe(e: Event): string {
   switch (e.kind) {
