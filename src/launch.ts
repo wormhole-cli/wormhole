@@ -19,7 +19,7 @@ export function shellLine(argv: string[]): string {
 }
 
 /** Hand a link to the OS, which opens the app registered for its scheme. */
-export function openUrl(url: string): Promise<number> {
-  const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
-  return launch([opener, url], process.cwd());
+export function openUrl(url: string, run: typeof launch = launch, platform = process.platform): Promise<number> {
+  const opener = platform === 'darwin' ? 'open' : platform === 'win32' ? 'explorer' : 'xdg-open';
+  return run([opener, url], process.cwd());
 }
