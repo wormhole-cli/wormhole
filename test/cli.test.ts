@@ -216,6 +216,58 @@ describe('wormhole switch and resume', () => {
   });
 });
 
+describe('wormhole switch --summarize', () => {
+  let calls: string[][];
+  const summarizing = (runner: Deps['run']) => (...args: string[]) =>
+    main(['node', 'wormhole', '-C', cwd, ...args], { ...deps(), run: runner });
+
+  beforeEach(async () => {
+    calls = [];
+    await claudeSession('c1', [['build the parser', 'Parser done.']]);
+  });
+
+  it('puts the leaving tool’s summary into the written session’s brief', async () => {
+    const runner: Deps['run'] = async (argv) => {
+      calls.push(argv);
+      return { code: 0, stdout: 'Parser is built; tests next.\n', stderr: '' };
+    };
+    expect(await summarizing(runner)('switch', 'codex', '--summarize', '--no-launch')).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.slice(0, 2)).toEqual(['claude', '-p']);
+    expect(calls[0]).toContain('c1');
+    expect(err.join('')).toContain('Asking claude for a summary of c1');
+
+    const thread = (await new Store(path.join(root, 'wh')).loadForCwd(cwd))!;
+    const written = await readFile(thread.segments.at(-1)!.path, 'utf8');
+    expect(written).toContain('## Summary from Claude Code\\nParser is built; tests next.');
+  });
+
+  it('falls back to the plain brief with a warning when the tool fails', async () => {
+    const runner: Deps['run'] = async () => ({ code: 1, stdout: '', stderr: 'not logged in\n' });
+    expect(await summarizing(runner)('switch', 'codex', '--summarize', '--no-launch')).toBe(0);
+    expect(err.join('')).toContain('no summary from claude (claude exited with 1: not logged in); using the plain brief');
+    expect(text()).toMatch(/Handed off claude c1 → codex/);
+
+    const thread = (await new Store(path.join(root, 'wh')).loadForCwd(cwd))!;
+    const written = await readFile(thread.segments.at(-1)!.path, 'utf8');
+    expect(written).toContain('[wormhole handoff]');
+    expect(written).not.toContain('Summary from');
+  });
+
+  it('does not ask when the target already holds the active session', async () => {
+    const runner: Deps['run'] = async (argv) => (calls.push(argv), { code: 0, stdout: 'x', stderr: '' });
+    expect(await summarizing(runner)('switch', 'claude', '--summarize', '--no-launch')).toBe(0);
+    expect(calls).toEqual([]);
+    expect(text()).toContain('resuming it');
+  });
+
+  it('adds the summary to `brief --summarize`', async () => {
+    const runner: Deps['run'] = async () => ({ code: 0, stdout: 'Ten lines of summary.', stderr: '' });
+    expect(await summarizing(runner)('brief', '--to', 'codex', '--summarize')).toBe(0);
+    expect(text()).toContain('## Summary from Claude Code\nTen lines of summary.\n\n## Original goal');
+  });
+});
+
 describe('wormhole log and brief', () => {
   it('prints events labelled by tool, and the handoff note', async () => {
     await claudeSession('c1', [['goal one', 'reply one']]);
