@@ -31,9 +31,9 @@ Transcript: `~/.claude/projects/<abs cwd with every non-alphanumeric char → '-
 No index file; `claude -r <id>` looks in the current directory's encoded folder.
 
 **Spike result:** a 2-record file (`user` → `assistant`, linked by `parentUuid`) is found and
-loaded by `claude -p -r <id>`; a made-up id gives "No conversation found". The model turn
-itself was not completed because the CLI's login had expired, so answer-from-history is still
-to be confirmed.
+loaded by `claude -p -r <id>`; a made-up id gives "No conversation found". Verified 2026-10-26:
+`claude -p -r` answers from both a session wormhole synthesized from Codex and a wormhole copy of
+a native Claude session extended with Codex turns.
 
 Record fields used: `type`, `uuid`, `parentUuid`, `sessionId`, `cwd`, `gitBranch`, `version`,
 `timestamp`, `isSidechain: false`, `userType: "external"`, `message` (Anthropic API shape).
