@@ -1,4 +1,4 @@
-import { promises as fs } from 'node:fs';
+import { constants as fsConstants, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { atomicWrite } from '../store/store.js';
@@ -18,6 +18,61 @@ export function claudeSettingsPath(): string {
 export function codexConfigPath(): string {
   return path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'config.toml');
 }
+
+export function opencodePluginPath(): string {
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(homedir(), '.config'), 'opencode', 'plugins', 'wormhole.js');
+}
+
+/** Whether `opencode` is an executable on PATH: the default install set only includes tools that are there. */
+export async function opencodeOnPath(): Promise<boolean> {
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
+    if (await fs.access(path.join(dir, 'opencode'), fsConstants.X_OK).then(() => true, () => false)) return true;
+  }
+  return false;
+}
+
+// ---- opencode: a global plugin ----
+
+/** First line of the plugin file; uninstall only removes a file that starts with it. */
+export const OPENCODE_MARKER = '// wormhole opencode plugin: written by `wormhole hooks install`, removed by `wormhole hooks uninstall`.';
+
+/**
+ * Plugin that runs `wormhole hook opencode <payload>` after each finished turn
+ * (`session.idle`). It spawns detached and swallows every error, so opencode is never
+ * held up; subagent sessions (those with a parentID) are skipped.
+ */
+export function opencodePlugin(self: string[]): string {
+  return `${OPENCODE_MARKER}
+import { spawn } from "node:child_process";
+
+const WORMHOLE = ${JSON.stringify(self)};
+
+export const WormholePlugin = async ({ directory }) => {
+  const sessions = new Map();
+  return {
+    event: async ({ event }) => {
+      try {
+        const info = event.properties?.info;
+        if ((event.type === "session.created" || event.type === "session.updated") && info?.id) {
+          sessions.set(info.id, { directory: info.directory, child: !!info.parentID });
+          return;
+        }
+        if (event.type !== "session.idle") return;
+        const sessionID = event.properties?.sessionID;
+        const known = sessions.get(sessionID);
+        if (!sessionID || known?.child) return;
+        const payload = JSON.stringify({ type: event.type, sessionID, cwd: known?.directory || directory });
+        const child = spawn(WORMHOLE[0], [...WORMHOLE.slice(1), "hook", "opencode", payload], { detached: true, stdio: "ignore" });
+        child.on("error", () => {});
+        child.unref();
+      } catch {}
+    },
+  };
+};
+`;
+}
+
+const isOurPlugin = (text: string) => text.startsWith(OPENCODE_MARKER);
 
 // ---- Claude Code: settings.json hooks.SessionEnd ----
 
@@ -208,7 +263,7 @@ async function backupOnce(file: string) {
   if (!exists) await fs.copyFile(file, backup).catch(() => {});
 }
 
-export type Target = 'claude' | 'codex';
+export type Target = 'claude' | 'codex' | 'opencode';
 
 export async function install(targets: Target[], self = selfArgv()): Promise<string[]> {
   const done: string[] = [];
@@ -227,6 +282,13 @@ export async function install(targets: Target[], self = selfArgv()): Promise<str
     await atomicWrite(file, withCodexNotify(toml, self));
     const prev = chained ? (chainedFrom(chained.argv) ?? chained.argv) : [];
     done.push(`Codex: notify in ${file}${prev.length > 0 ? ` (still runs ${path.basename(prev[0]!)})` : ''}`);
+  }
+  if (targets.includes('opencode')) {
+    const file = opencodePluginPath();
+    const existing = await readOr(file, '');
+    if (existing && !isOurPlugin(existing)) throw new Error(`${file} exists and was not written by wormhole; leaving it alone`);
+    await atomicWrite(file, opencodePlugin(self));
+    done.push(`opencode: plugin ${file}`);
   }
   return done;
 }
@@ -249,10 +311,21 @@ export async function uninstall(targets: Target[]): Promise<string[]> {
       done.push(`Codex: restored notify in ${file}`);
     }
   }
+  if (targets.includes('opencode')) {
+    const file = opencodePluginPath();
+    if (isOurPlugin(await readOr(file, ''))) {
+      await fs.rm(file);
+      done.push(`opencode: removed plugin ${file}`);
+    }
+  }
   return done;
 }
 
-export async function status(): Promise<{ claude: boolean; codex: boolean }> {
+export async function status(): Promise<Record<Target, boolean>> {
   const settings = JSON.parse(await readOr(claudeSettingsPath(), '{}')) as Settings;
-  return { claude: hasClaudeHook(settings), codex: hasCodexNotify(await readOr(codexConfigPath(), '')) };
+  return {
+    claude: hasClaudeHook(settings),
+    codex: hasCodexNotify(await readOr(codexConfigPath(), '')),
+    opencode: isOurPlugin(await readOr(opencodePluginPath(), '')),
+  };
 }

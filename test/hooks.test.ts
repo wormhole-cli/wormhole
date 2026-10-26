@@ -1,16 +1,20 @@
-import { appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { readdirSync } from 'node:fs';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ClaudeAdapter, encodeCwd } from '../src/adapters/claude.js';
 import { CodexAdapter } from '../src/adapters/codex.js';
 import type { Context } from '../src/core.js';
-import { importFromHook, parseClaudeHook, parseCodexNotify } from '../src/hooks/handle.js';
+import { type OcSession, OpencodeAdapter } from '../src/adapters/opencode.js';
+import { importFromHook, parseClaudeHook, parseCodexNotify, parseOpencodeHook } from '../src/hooks/handle.js';
 import {
   chainedFrom,
   findNotify,
   hasClaudeHook,
   hasCodexNotify,
+  OPENCODE_MARKER,
+  opencodePlugin,
   parseTomlStrings,
   withClaudeHook,
   withCodexNotify,
@@ -114,6 +118,83 @@ describe('hook payloads', () => {
     expect(parseCodexNotify('{"type":"approval-requested","thread-id":"t1","cwd":"/p"}')).toBeNull();
     expect(parseCodexNotify(undefined)).toBeNull();
   });
+
+  it('reads the opencode plugin payload and ignores other events', () => {
+    expect(parseOpencodeHook('{"type":"session.idle","sessionID":"ses_1","cwd":"/p"}')).toEqual({
+      tool: 'opencode',
+      cwd: '/p',
+      session: 'ses_1',
+    });
+    expect(parseOpencodeHook('{"type":"session.status","sessionID":"ses_1","cwd":"/p"}')).toBeNull();
+    expect(parseOpencodeHook('{"type":"session.idle","cwd":"/p"}')).toBeNull();
+    expect(parseOpencodeHook(undefined)).toBeNull();
+  });
+});
+
+describe('opencode plugin', () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'wormhole-plugin-'));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  /** Load the generated plugin with a fake wormhole that records its argv, one file per call. */
+  async function load(binary = process.execPath) {
+    const recorder = path.join(root, 'record.cjs');
+    await writeFile(
+      recorder,
+      `const fs = require('fs'); fs.writeFileSync(require('path').join(${JSON.stringify(root)}, 'call-' + Date.now() + '-' + process.pid), JSON.stringify(process.argv.slice(2)));`,
+    );
+    const file = path.join(root, 'wormhole.mjs');
+    await writeFile(file, opencodePlugin([binary, recorder]));
+    const mod = (await import(file)) as { WormholePlugin: (i: { directory: string }) => Promise<{ event: (e: unknown) => Promise<void> }> };
+    return mod.WormholePlugin({ directory: '/instance' });
+  }
+  const calls = async () => {
+    for (let i = 0; i < 100; i++) {
+      const files = readdirSync(root).filter((f) => f.startsWith('call-'));
+      if (files.length > 0) return Promise.all(files.map(async (f) => JSON.parse(await readFile(path.join(root, f), 'utf8')) as string[]));
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return [];
+  };
+
+  it('starts with the marker uninstall looks for', () => {
+    expect(opencodePlugin(self).split('\n')[0]).toBe(OPENCODE_MARKER);
+  });
+
+  it('runs wormhole hook opencode on session.idle with the session directory', async () => {
+    const hooks = await load();
+    const event = (type: string, properties: unknown) => hooks.event({ event: { type, properties } });
+    await event('session.created', { info: { id: 'ses_main', directory: '/proj' } });
+    await event('message.updated', { info: { role: 'assistant' } });
+    await event('session.idle', { sessionID: 'ses_main' });
+    const [argv] = await calls();
+    expect(argv!.slice(0, 2)).toEqual(['hook', 'opencode']);
+    expect(parseOpencodeHook(argv![2])).toEqual({ tool: 'opencode', cwd: '/proj', session: 'ses_main' });
+  });
+
+  it('skips subagent sessions and falls back to the instance directory', async () => {
+    const hooks = await load();
+    const event = (type: string, properties: unknown) => hooks.event({ event: { type, properties } });
+    await event('session.updated', { info: { id: 'ses_child', directory: '/proj', parentID: 'ses_main' } });
+    await event('session.idle', { sessionID: 'ses_child' });
+    await event('session.idle', {});
+    await event('session.idle', { sessionID: 'ses_unknown' });
+    const all = await calls();
+    expect(all.map((a) => parseOpencodeHook(a[2])?.session)).toEqual(['ses_unknown']);
+    expect(parseOpencodeHook(all[0]![2])!.cwd).toBe('/instance');
+  });
+
+  it('never throws into opencode', async () => {
+    const hooks = await load(path.join(root, 'no-such-node'));
+    await expect(hooks.event({ event: { type: 'session.idle', properties: { sessionID: 's' } } })).resolves.toBeUndefined();
+    await expect(hooks.event({ event: null })).resolves.toBeUndefined();
+    // The spawn error arrives later; an unhandled one would fail the run.
+    await new Promise((r) => setTimeout(r, 100));
+  });
 });
 
 describe('importFromHook', () => {
@@ -174,6 +255,46 @@ describe('importFromHook', () => {
     await appendFile(file, `${JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'yo' }] } })}\n`);
     expect(await importFromHook({ tool: 'claude', cwd: ctx.cwd, session: 's1' }, ctx)).toBe(1);
     expect(await importFromHook({ tool: 'claude', cwd: ctx.cwd, session: 's1' }, ctx)).toBe(0);
+  });
+});
+
+describe('importFromHook with opencode', () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'wormhole-hooks-oc-'));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('imports finished turns of a session that exists, and skips one that does not', async () => {
+    const cwd = path.join(root, 'project');
+    const session: OcSession = {
+      info: { id: 'ses_1', directory: cwd, time: { created: 1, updated: 2 } },
+      messages: [
+        { info: { id: 'msg_1', role: 'user', time: { created: 1 } }, parts: [{ type: 'text', text: 'hi' }] },
+        { info: { id: 'msg_2', role: 'assistant', time: { created: 2, completed: 3 } }, parts: [{ type: 'text', text: 'yo' }] },
+      ],
+    } as OcSession;
+    const exported: string[] = [];
+    const cli = {
+      list: async () => [],
+      export: async (_cwd: string, id: string) => (exported.push(id), id === 'ses_1' ? structuredClone(session) : null),
+      import: async () => {},
+    };
+    const claude = { locate: () => { throw new Error('only the reporting tool is asked'); } };
+    const ctx = {
+      cwd,
+      store: new Store(path.join(root, 'wh')),
+      adapters: { opencode: new OpencodeAdapter({ cli, model: 'p/m' }), claude },
+    } as unknown as Context;
+
+    expect(await importFromHook({ tool: 'opencode', cwd, session: 'ses_1' }, ctx)).toBe(0);
+    expect(exported).toEqual([]);
+    await ctx.store.loadOrCreateForCwd(cwd);
+    expect(await importFromHook({ tool: 'opencode', cwd, session: 'nope' }, ctx)).toBe(0);
+    expect(await importFromHook({ tool: 'opencode', cwd, session: 'ses_1' }, ctx)).toBe(2);
+    expect((await ctx.store.loadForCwd(cwd))!.segments.map((s) => `${s.tool}:${s.nativeId}`)).toEqual(['opencode:ses_1']);
   });
 });
 

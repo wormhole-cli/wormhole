@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -95,6 +95,7 @@ beforeEach(async () => {
   process.env.WORMHOLE_HOME = path.join(root, 'wh');
   process.env.CLAUDE_CONFIG_DIR = claudeDir();
   process.env.CODEX_HOME = codexHome();
+  process.env.XDG_CONFIG_HOME = path.join(root, 'xdg');
   vi.spyOn(console, 'log').mockImplementation((...a) => void out.push(a.join(' ')));
   vi.spyOn(console, 'error').mockImplementation((...a) => void err.push(a.join(' ')));
   vi.spyOn(process.stdout, 'write').mockImplementation(((s: string) => (out.push(String(s)), true)) as never);
@@ -235,6 +236,11 @@ describe('wormhole log and brief', () => {
 });
 
 describe('wormhole hooks', () => {
+  beforeEach(() => {
+    // No opencode on PATH unless a test puts one there.
+    process.env.PATH = path.join(root, 'bin');
+  });
+
   it('installs, reports and removes both hooks', async () => {
     // The hook command names the running wormhole script; under vitest that is vitest itself.
     const script = process.argv[1];
@@ -248,10 +254,12 @@ describe('wormhole hooks', () => {
 
     expect(await run('hooks', 'install')).toBe(0);
     expect(text()).toContain('still runs old');
+    expect(text()).not.toContain('opencode');
     out = [];
     expect(await run('hooks', 'status')).toBe(0);
     expect(text()).toMatch(/claude\s+installed/);
     expect(text()).toMatch(/codex\s+installed/);
+    expect(text()).toMatch(/opencode\s+not installed/);
 
     out = [];
     expect(await run('hooks', 'uninstall', '--codex')).toBe(0);
@@ -288,5 +296,56 @@ describe('wormhole hooks', () => {
     const failing = { ...deps(), context: () => { throw new Error('boom'); } };
     expect(await main(['node', 'wormhole', 'hook', 'claude'], failing)).toBe(0);
     expect(await readFile(path.join(root, 'wh', 'hook.log'), 'utf8')).toContain('Error: boom');
+  });
+
+  it('includes opencode by default once it is on PATH, and removes only its plugin', async () => {
+    const script = process.argv[1];
+    process.argv[1] = '/opt/wormhole/bin/wormhole.js';
+    onTestFinished(() => {
+      process.argv[1] = script;
+    });
+    await mkdir(path.join(root, 'bin'));
+    await writeFile(path.join(root, 'bin', 'opencode'), '#!/bin/sh\n');
+    await chmod(path.join(root, 'bin', 'opencode'), 0o755);
+    const plugin = path.join(root, 'xdg', 'opencode', 'plugins', 'wormhole.js');
+
+    expect(await run('hooks', 'install')).toBe(0);
+    expect(text()).toContain(`opencode: plugin ${plugin}`);
+    expect(await readFile(plugin, 'utf8')).toContain('"/opt/wormhole/bin/wormhole.js"');
+    out = [];
+    expect(await run('hooks', 'status')).toBe(0);
+    expect(text()).toMatch(/opencode\s+installed/);
+
+    out = [];
+    expect(await run('hooks', 'uninstall', '--opencode')).toBe(0);
+    expect(text()).toBe(`opencode: removed plugin ${plugin}`);
+    expect(existsSync(plugin)).toBe(false);
+    expect(existsSync(path.join(claudeDir(), 'settings.json'))).toBe(true);
+  });
+
+  it('installs only opencode with --opencode, even when it is not on PATH', async () => {
+    expect(await run('hooks', 'install', '--opencode')).toBe(0);
+    expect(text()).not.toContain('Claude Code');
+    expect(existsSync(path.join(root, 'xdg', 'opencode', 'plugins', 'wormhole.js'))).toBe(true);
+    expect(existsSync(path.join(codexHome(), 'config.toml'))).toBe(false);
+  });
+
+  it('imports through the opencode hook', async () => {
+    withOpencode = true;
+    const c = context(cwd);
+    const oc = c.adapters.opencode as OpencodeAdapter;
+    const fake = (oc as unknown as { cli: FakeOpencode }).cli;
+    fake.sessions.set('ses_1', {
+      info: { id: 'ses_1', directory: cwd, time: { created: 1, updated: 2 } },
+      messages: [
+        { info: { id: 'msg_1', role: 'user', time: { created: 1 } }, parts: [{ type: 'text', text: 'hello' }] },
+        { info: { id: 'msg_2', role: 'assistant', time: { created: 2, completed: 3 } }, parts: [{ type: 'text', text: 'hi' }] },
+      ],
+    } as OcSession);
+    await new Store(path.join(root, 'wh')).loadOrCreateForCwd(cwd);
+    const payload = JSON.stringify({ type: 'session.idle', sessionID: 'ses_1', cwd });
+    expect(await main(['node', 'wormhole', 'hook', 'opencode', payload], { ...deps(), context: () => c })).toBe(0);
+    const thread = (await new Store(path.join(root, 'wh')).loadForCwd(cwd))!;
+    expect(thread.segments.map((s) => `${s.tool}:${s.nativeId}`)).toEqual(['opencode:ses_1']);
   });
 });

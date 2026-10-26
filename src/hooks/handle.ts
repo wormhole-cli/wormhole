@@ -35,6 +35,17 @@ export function parseCodexNotify(payload: string | undefined): HookInput | null 
   }
 }
 
+/** wormhole's opencode plugin passes {type: "session.idle", sessionID, cwd} as the last argument. */
+export function parseOpencodeHook(payload: string | undefined): HookInput | null {
+  try {
+    const p = JSON.parse(payload ?? '') as { type?: string; sessionID?: string; cwd?: string };
+    if (p.type !== 'session.idle' || !p.sessionID || !p.cwd) return null;
+    return { tool: 'opencode', cwd: p.cwd, session: p.sessionID };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Import one session's new turns into its project's thread. Projects without a
  * thread, and sessions the adapter cannot find, are left alone.
