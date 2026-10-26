@@ -96,11 +96,54 @@ Reasoning is never copied (Claude thinking signatures and Codex encrypted reason
 their own provider), and wormhole never edits or deletes an existing native session. See
 [docs/formats.md](docs/formats.md) for the on-disk formats.
 
+## Status
+
+As of 2026-10-26 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, opencode 1.19).
+
+**Verified with the real tools**
+
+- Claude Code → Codex → Claude Code, both as a new session and as an extended copy; the resumed
+  model answers from the imported history (`claude -p -r`, `codex exec resume`).
+- opencode round trip through `opencode export` / `import`.
+- Desktop apps: Codex Desktop loads and resumes handed-off threads (`--app`, `codex://threads/<id>`),
+  and its turns fire the notify hook; Claude Desktop imports a session from
+  `claude://resume?session=<id>` and answers from it.
+- Pickers: handed-off sessions show up in `codex resume` and as the newest session for `claude -c`.
+- `--summarize` against real Claude Code and Codex sessions.
+- opencode auto-import: a real `opencode run` updated the thread through the plugin.
+- Accounts: Claude Code → `codex@alt` (a second `CODEX_HOME`) → Claude Code; Codex resumed it from
+  the other folder and its turn came back.
+
+**Not yet verified with the real tools** (unit-tested only)
+
+- Moving between two Claude Code logins (`claude@work`). It needs a second logged-in folder; the open
+  question is whether the other account accepts the copied session's thinking blocks.
+- `--summarize` from opencode, and handing back from opencode with turns made there: not yet
+  run with a working opencode model.
+- Interactive `claude -r` picker listing (it stopped at the folder-trust prompt; `claude -c` uses the
+  same lookup and finds the session).
+
+**Limits**
+
+- `--app` only works for the default folders: the desktop apps read only `~/.claude` / `~/.codex`.
+- Codex locks a thread while a process has it open (`thread-writer-locks/`): a thread the CLI's
+  `codex app-server` holds shows "This is open in another app" in Codex Desktop, and `codex archive`
+  fails on threads Desktop holds. Open handoffs for Desktop with `--app`.
+- opencode has no account folders, so accounts are for Claude Code and Codex only.
+- Tool calls cross tools as one-line summaries, not as native calls; tool text over 4,000 characters
+  is cut in the thread and kept whole in `artifacts/`.
+
+**Ideas, not started**
+
+- When one account hits its usage limit, switch to another account automatically.
+- `wormhole doctor`: check hooks, logins and account folders in one go.
+
 ## Develop
 
 ```bash
 npm install
 npm run build
 npm test          # vitest, 2 workers
+npm run coverage  # same, with coverage; fails under 90% lines/functions, 80% branches
 npm link          # puts wormhole / wh on PATH
 ```
