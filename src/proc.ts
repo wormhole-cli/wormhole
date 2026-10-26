@@ -55,7 +55,7 @@ export async function findOnPath(
   const windows = platform === 'win32';
   const dirs = (env.PATH ?? env.Path ?? '').split(windows ? ';' : ':').filter(Boolean);
   const exts = windows
-    ? ['', ...(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean).map((e) => e.toLowerCase())]
+    ? ['', ...(env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)]
     : [''];
   for (const dir of dirs) {
     for (const ext of exts) {

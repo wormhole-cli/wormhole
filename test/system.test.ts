@@ -124,7 +124,7 @@ describe('finding and running programs', () => {
       expect(await findOnPath('tool', { PATH: root }, 'linux')).toBe(path.join(root, 'tool'));
     }
     // Windows: a name matches with an extension from PATHEXT; `Path` works as the variable name.
-    expect(await findOnPath('tool', { Path: root, PATHEXT: '.EXE;.CMD' }, 'win32')).toBe(path.join(root, 'tool.cmd'));
+    expect(await findOnPath('tool', { Path: root, PATHEXT: '.EXE;.CMD' }, 'win32')).toBe(path.join(root, 'tool.CMD'));
     expect(await findOnPath('tool.CMD', { Path: root }, 'win32')).toBe(path.join(root, 'tool.CMD'));
     expect(await findOnPath('missing', { PATH: root }, 'win32')).toBeNull();
     expect(await findOnPath('tool', {}, 'linux')).toBeNull();

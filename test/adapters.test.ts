@@ -99,7 +99,7 @@ describe('ClaudeAdapter', () => {
     expect(recs[0].parentUuid).toBeNull();
     for (let i = 1; i < recs.length; i++) expect(recs[i].parentUuid).toBe(recs[i - 1].uuid);
     for (const r of recs) {
-      expect(r).toMatchObject({ sessionId: ref.nativeId, cwd, version: '9.9.9', gitBranch: 'main', isSidechain: false });
+      expect(r).toMatchObject({ sessionId: ref.nativeId, cwd: path.resolve(cwd), version: '9.9.9', gitBranch: 'main', isSidechain: false });
     }
     expect(JSON.stringify(recs)).not.toContain('tool_use');
     expect(recs[1].message.content[0].text).toContain('▸ Write: hello.ts → ok: created');
