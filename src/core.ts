@@ -8,6 +8,7 @@ import type { NativeRef, ToolAdapter } from './adapters/types.js';
 import { type BriefInput, buildBrief } from './handoff/brief.js';
 import { type GitInfo, gitInfo } from './handoff/git.js';
 import { type Event, type Segment, srcKey, type Thread, type Tool } from './model/thread.js';
+import type { LimitStatus } from './limits.js';
 import { Store } from './store/store.js';
 
 /** Adapters by key: a tool (`claude`) or a tool's named account (`claude@work`). */
@@ -90,6 +91,10 @@ export function withArtifactPaths(home: Store, threadId: string, events: Event[]
   );
 }
 
+function sessionKey(r: { tool: Tool; account?: string; nativeId: string }) {
+  return { tool: r.tool, ...(r.account ? { account: r.account } : {}), nativeId: r.nativeId };
+}
+
 /** A ref as core passes it around: marked with the account of the adapter that found it. */
 function tagged(ref: NativeRef, a: ToolAdapter): NativeRef {
   return a.account ? { ...ref, account: a.account } : ref;
@@ -163,6 +168,8 @@ export async function makeBrief(
 export interface SwitchOptions extends SyncOptions {
   /** Added to the brief under its own heading. */
   summary?: BriefInput['summary'];
+  /** The session being left hit this limit: recorded on the thread as its fallback. */
+  limit?: LimitStatus;
 }
 
 export interface SwitchResult {
@@ -231,8 +238,17 @@ async function switchUnlocked(ctx: Context, to: string, opts: SwitchOptions, hom
     // Everything written so far is already in the thread; only later turns get imported.
     importedUpTo: offset,
     eventStart: events.length,
-    derivedFrom: { tool: active.tool, ...(active.account ? { account: active.account } : {}), nativeId: active.nativeId },
+    derivedFrom: sessionKey(active),
   });
+  const { limit } = opts;
+  thread.fallback = limit && {
+    from: sessionKey(active),
+    to: sessionKey(tagged(ref, target)),
+    ...(limit.at ? { limitedAt: limit.at } : {}),
+    ...(limit.resetsAt ? { resetsAt: limit.resetsAt } : {}),
+    reason: limit.reason,
+    offset,
+  };
   await ctx.store.save(thread);
   return { ref: tagged(ref, target), mode, from: active, base: base && tagged(base, adapter(ctx, refKey(last!))) };
 }

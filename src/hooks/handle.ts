@@ -1,8 +1,11 @@
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { ToolAdapter } from '../adapters/types.js';
-import { type Context, defaultContext, sync } from '../core.js';
+import { loadFile } from '../accounts.js';
+import type { NativeRef, ToolAdapter } from '../adapters/types.js';
+import { type Context, defaultContext, refKey, switchTo, sync } from '../core.js';
+import { pickFallback } from '../fallback.js';
+import { sessionLimit } from '../limits.js';
 import type { Tool } from '../model/thread.js';
 import { wormholeHome } from '../store/store.js';
 
@@ -53,21 +56,65 @@ export function parseOpencodeHook(payload: string | undefined): HookInput | null
  */
 export async function importFromHook(input: HookInput, base: Context = defaultContext(input.cwd)): Promise<number> {
   if (!(await base.store.loadForCwd(input.cwd))) return 0;
-  // The hook does not say which account's folder it ran from: the one holding the session.
-  let found: [string, ToolAdapter] | undefined;
-  for (const [key, a] of Object.entries(base.adapters) as [string, ToolAdapter][]) {
-    // Tools also report helper threads wormhole does not follow (Codex subagents, unsaved threads).
-    if (a.tool === input.tool && (await a.locate(input.cwd, input.session))) {
-      found = [key, a];
-      break;
-    }
-  }
+  const found = await findSession(input, base);
   if (!found) return 0;
   // Only the reporting tool: probing the others (opencode spawns a CLI) would slow every turn.
   const [key, a] = found;
   const ctx: Context = { ...base, cwd: input.cwd, adapters: { [key]: a } };
   const { imported } = await sync(ctx, { tool: key, session: input.session });
   return imported.reduce((n, i) => n + i.events, 0);
+}
+
+/** The account adapter holding the hook's session: the hook does not say which folder it ran from. */
+async function findSession(input: HookInput, base: Context): Promise<[string, ToolAdapter, NativeRef] | undefined> {
+  for (const [key, a] of Object.entries(base.adapters) as [string, ToolAdapter][]) {
+    if (a.tool !== input.tool) continue;
+    // Tools also report helper threads wormhole does not follow (Codex subagents, unsaved threads).
+    const ref = await a.locate(input.cwd, input.session);
+    if (ref) return [key, a, ref];
+  }
+  return undefined;
+}
+
+/**
+ * With `accounts auto on`: when the hook's session hit its usage limit, write the fallback
+ * session and record it on the thread, for resume and status to point at. Never launches:
+ * a hook has no terminal to open it in. Returns the key it moved to, if any.
+ */
+export async function fallbackFromHook(
+  input: HookInput,
+  base: Context = defaultContext(input.cwd),
+  now = new Date(),
+): Promise<string | undefined> {
+  const settings = loadFile();
+  // opencode reports no usage limits.
+  if (!settings.auto || input.tool === 'opencode') return undefined;
+  const thread = await base.store.loadForCwd(input.cwd);
+  const found = thread && (await findSession(input, base));
+  if (!found) return undefined;
+  const [key, , ref] = found;
+  const limit = await sessionLimit(ref, now);
+  if (!limit.limited) return undefined;
+  // Codex notifies every turn: one fallback per limit hit.
+  const f = thread.fallback;
+  if (f && f.from.nativeId === input.session && f.limitedAt === limit.at) return undefined;
+
+  const pick = await pickFallback({ ...base, cwd: input.cwd }, key, settings.fallback, now);
+  if (!pick.target) {
+    const why = pick.skipped.map((s) => `${s.key}: ${s.why}`).join('; ');
+    throw new Error(`${key} ${input.session} hit its limit and nothing has room${why ? ` (${why})` : ''}`);
+  }
+  // Only the adapters the switch reads or writes, so opencode's CLI is not run for nothing.
+  const keys = new Set([key, pick.target, ...thread.segments.map((s) => refKey(s))]);
+  const adapters = Object.fromEntries([...keys].flatMap((k) => (base.adapters[k] ? [[k, base.adapters[k]]] : [])));
+  await switchTo({ ...base, cwd: input.cwd, adapters }, pick.target, { tool: key, session: input.session, limit });
+  return pick.target;
+}
+
+/** What every hook does after parsing its payload: import, then maybe fall back. */
+export async function handleHook(input: HookInput, ctx: Context): Promise<void> {
+  await importFromHook(input, ctx);
+  await fallbackFromHook(input, ctx);
 }
 
 /** Run the notify program wormhole wrapped, without waiting for it. */

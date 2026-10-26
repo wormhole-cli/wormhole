@@ -22,7 +22,14 @@ export const Account = z.object({
 });
 export type Account = z.infer<typeof Account>;
 
-const File = z.object({ accounts: z.array(Account).default([]) });
+const File = z.object({
+  accounts: z.array(Account).default([]),
+  /** Order `wormhole next` tries when the session in use hits its usage limit (keys: `claude`, `codex@alt`). */
+  fallback: z.array(z.string()).optional(),
+  /** When true, the hooks write the fallback session as soon as a session is found limited. */
+  auto: z.boolean().optional(),
+});
+type File = z.infer<typeof File>;
 
 export function accountsPath(): string {
   return path.join(wormholeHome(), 'accounts.json');
@@ -30,18 +37,47 @@ export function accountsPath(): string {
 
 /** Sync so contexts can be built without awaiting; a missing file means no accounts. */
 export function loadAccounts(file = accountsPath()): Account[] {
+  return loadFile(file).accounts;
+}
+
+/** The whole accounts.json, settings included. */
+export function loadFile(file = accountsPath()): File {
   let raw: string;
   try {
     raw = readFileSync(file, 'utf8');
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { accounts: [] };
     throw err;
   }
-  return File.parse(JSON.parse(raw)).accounts;
+  return File.parse(JSON.parse(raw));
 }
 
-async function saveAccounts(accounts: Account[], file = accountsPath()): Promise<void> {
-  await atomicWrite(file, `${JSON.stringify({ accounts }, null, 2)}\n`);
+/** Change part of accounts.json, keeping the rest. */
+async function update(change: Partial<File>, file = accountsPath()): Promise<void> {
+  const next = { ...loadFile(file), ...change };
+  await atomicWrite(file, `${JSON.stringify(next, null, 2)}\n`);
+}
+
+async function saveAccounts(accounts: Account[]): Promise<void> {
+  await update({ accounts });
+}
+
+/** Set the fallback order; an empty list goes back to the default order. */
+export async function setFallback(keys: string[]): Promise<string[] | undefined> {
+  const accounts = loadAccounts();
+  for (const key of keys) {
+    const { tool, account } = parseKey(key);
+    if (account && !accounts.some((a) => a.tool === tool && a.name === account)) throw new Error(`no account ${key}`);
+  }
+  const dupe = keys.find((k, i) => keys.indexOf(k) !== i);
+  if (dupe) throw new Error(`${dupe} is listed twice`);
+  const fallback = keys.length > 0 ? keys : undefined;
+  await update({ fallback });
+  return fallback;
+}
+
+export async function setAuto(on: boolean): Promise<void> {
+  await update({ auto: on });
 }
 
 export async function addAccount(input: { name: string; tool: string; dir: string }): Promise<Account> {
@@ -65,7 +101,13 @@ export async function removeAccount(key: string): Promise<Account> {
   const accounts = loadAccounts();
   const found = accounts.find((a) => a.tool === tool && a.name === account);
   if (!found) throw new Error(`no account ${key}`);
-  await saveAccounts(accounts.filter((a) => a !== found));
+  // Take it out of the fallback order too, so the list never names a missing account.
+  const { fallback } = loadFile();
+  const gone = keyOf(found.tool, found.name);
+  await update({
+    accounts: accounts.filter((a) => a !== found),
+    ...(fallback?.includes(gone) ? { fallback: fallback.filter((k) => k !== gone) } : {}),
+  });
   return found;
 }
 
