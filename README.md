@@ -35,7 +35,10 @@ instead of the terminal.
 
 Each project directory has one **thread** in `~/.wormhole/threads/<id>/` (override with `WORMHOLE_HOME`):
 `thread.json` lists the native sessions (segments) it spans, `events.jsonl` holds the conversation as
-tool-neutral events.
+tool-neutral events. Tool inputs and outputs longer than 4,000 characters are cut in `events.jsonl`
+and saved whole in `artifacts/<sha256>.txt` (once per distinct text); `wormhole log` marks such events
+with `[full: artifacts/…]`, and a handed-off session points the model at the file
+(`▸ Bash: cat big.log → ok: … (full output: ~/.wormhole/threads/<id>/artifacts/<hash>.txt)`).
 
 `switch <tool>`:
 

@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { Event } from '../model/thread.js';
-import { CONTINUED, keep, toTurns, type Turn } from './render.js';
+import { CONTINUED, toTurns, type Turn } from './render.js';
 import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.js';
 
 /**
@@ -116,7 +116,7 @@ export class OpencodeAdapter implements ToolAdapter {
           events.push({ kind, text: part.text, ts });
         } else if (part.type === 'tool' && part.callID && part.tool) {
           const input = part.state?.input ?? {};
-          events.push({ kind: 'tool_call', callId: part.callID, name: part.tool, inputSummary: keep(summarizeInput(input)), ts });
+          events.push({ kind: 'tool_call', callId: part.callID, name: part.tool, inputSummary: summarizeInput(input), ts });
           const op = FILE_TOOLS[part.tool];
           if (op && typeof input.filePath === 'string') events.push({ kind: 'file_change', path: input.filePath, op, ts });
           const status = part.state?.status;
@@ -125,7 +125,7 @@ export class OpencodeAdapter implements ToolAdapter {
             events.push({
               kind: 'tool_result',
               callId: part.callID,
-              summary: keep(part.state?.output ?? part.state?.error ?? ''),
+              summary: part.state?.output ?? part.state?.error ?? '',
               isError: status === 'error' || (typeof exit === 'number' && exit !== 0),
               ts,
             });

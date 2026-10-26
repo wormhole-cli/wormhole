@@ -8,6 +8,12 @@ export type Tool = z.infer<typeof Tool>;
 const meta = { ts: z.string().optional(), src: z.string().optional() };
 
 /**
+ * Set when the text was cut to fit the store: names the file in the thread's
+ * `artifacts/` directory that holds it in full.
+ */
+const artifact = z.string().optional();
+
+/**
  * Neutral transcript event. Reasoning is never carried across tools: Claude
  * thinking signatures and Codex encrypted_content only verify with their own
  * provider, so readers drop them.
@@ -20,6 +26,7 @@ export const Event = z.discriminatedUnion('kind', [
     callId: z.string(),
     name: z.string(),
     inputSummary: z.string(),
+    artifact,
     ...meta,
   }),
   z.object({
@@ -27,6 +34,7 @@ export const Event = z.discriminatedUnion('kind', [
     callId: z.string(),
     summary: z.string(),
     isError: z.boolean().default(false),
+    artifact,
     ...meta,
   }),
   z.object({

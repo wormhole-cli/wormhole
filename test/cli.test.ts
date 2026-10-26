@@ -228,6 +228,20 @@ describe('wormhole log and brief', () => {
     expect(text()).toContain('## Original goal\ngoal one');
   });
 
+  it('marks events whose full text is in an artifact', async () => {
+    const dir = path.join(claudeDir(), 'projects', encodeCwd(cwd));
+    await mkdir(dir, { recursive: true });
+    const records = [
+      { type: 'user', uuid: 'u1', message: { role: 'user', content: 'read it' } },
+      { type: 'assistant', uuid: 'u2', parentUuid: 'u1', message: { role: 'assistant', content: [{ type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'a' } }] } },
+      { type: 'user', uuid: 'u3', parentUuid: 'u2', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'z'.repeat(5000) }] } },
+    ];
+    await writeFile(path.join(dir, 'c1.jsonl'), records.map((r) => JSON.stringify(r)).join('\n') + '\n');
+    expect(await run('log')).toBe(0);
+    expect(out[2]).toMatch(/result\s+z+….*\[full: artifacts\/[0-9a-f]{32}\.txt\]$/);
+    expect(out[1]).not.toContain('[full:');
+  });
+
   it('prints the version and exits 0', async () => {
     expect(await main(['node', 'wormhole', '--version'], deps())).toBe(0);
     expect(out.join('')).toContain('0.1.0');
