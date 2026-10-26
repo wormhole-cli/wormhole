@@ -86,3 +86,20 @@ every part.
   with `summary: true`, `mode: "compaction"`.
 - **Gotcha:** opencode exits before draining a stdout pipe, so `export` / `session list` output over
   8 KB arrives truncated. wormhole points stdout at a file instead.
+
+## Headless summary runs (`--summarize`, verified 2026-10-26)
+
+- **Claude Code 2.1.310:** `claude -p <prompt> --resume <id> --fork-session --no-session-persistence
+  --output-format text --tools ''` answers from the session and leaves the transcript folder
+  byte-for-byte unchanged (no fork file either). `--tools` is variadic: an argument after
+  `--tools ''` is taken as a tool name, so the prompt has to come before it.
+- **Codex 0.164.0:** `codex exec resume --ephemeral … <id> <prompt>` still appends the new turn to the
+  original rollout; `--ephemeral` does not cover resume. wormhole copies the rollout into a temporary
+  `CODEX_HOME/sessions/` with symlinks to the real `auth.json` and `config.toml`, sets
+  `-c notify=[]` so the hook does not fire for it, and reads the reply from `-o <file>`
+  (`--output-last-message`). Resume by id finds the copy without any sqlite state.
+- **opencode 1.19.0:** `opencode run --session <id> --fork --format json <prompt>` prints one JSON
+  event per line, each with `type` and `sessionID` (the fork's); text arrives as
+  `{"type":"text","part":{"text":…}}`. The fork is a real session, so wormhole deletes it with
+  `opencode session delete <fork id>`. Not run end to end here;
+  the event shape for text parts is from opencode's run output, not a live capture.

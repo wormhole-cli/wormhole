@@ -3,7 +3,7 @@ import { ClaudeAdapter } from './adapters/claude.js';
 import { CodexAdapter } from './adapters/codex.js';
 import { OpencodeAdapter } from './adapters/opencode.js';
 import type { NativeRef, ToolAdapter } from './adapters/types.js';
-import { buildBrief } from './handoff/brief.js';
+import { type BriefInput, buildBrief } from './handoff/brief.js';
 import { type GitInfo, gitInfo } from './handoff/git.js';
 import { type Event, type Segment, srcKey, type Thread, type Tool } from './model/thread.js';
 import { Store } from './store/store.js';
@@ -107,10 +107,16 @@ export async function makeBrief(
   to: Tool,
   git?: GitInfo | null,
   continuing = false,
+  summary?: BriefInput['summary'],
 ): Promise<string> {
   const events = await ctx.store.readEvents(thread.id);
   const from = thread.segments.map((s) => s.tool).filter((t) => t !== to);
-  return buildBrief({ events, from, to, git: git === undefined ? await gitInfo(ctx.cwd) : git, continuing });
+  return buildBrief({ events, from, to, git: git === undefined ? await gitInfo(ctx.cwd) : git, continuing, summary });
+}
+
+export interface SwitchOptions extends SyncOptions {
+  /** Added to the brief under its own heading. */
+  summary?: BriefInput['summary'];
 }
 
 export interface SwitchResult {
@@ -143,11 +149,11 @@ export function missingFrom(seg: Segment, events: Event[]): Event[] | null {
  * it is extended with what happened elsewhere, so its native tool calls survive;
  * otherwise a new session is synthesized from the whole thread.
  */
-export async function switchTo(ctx: Context, to: Tool, opts: SyncOptions = {}): Promise<SwitchResult> {
+export async function switchTo(ctx: Context, to: Tool, opts: SwitchOptions = {}): Promise<SwitchResult> {
   return ctx.store.transaction(ctx.cwd, (store) => switchUnlocked({ ...ctx, store }, to, opts));
 }
 
-async function switchUnlocked(ctx: Context, to: Tool, opts: SyncOptions): Promise<SwitchResult> {
+async function switchUnlocked(ctx: Context, to: Tool, opts: SwitchOptions): Promise<SwitchResult> {
   const target = adapter(ctx, to);
   const { thread, active } = await sync(ctx, opts);
   if (!active) throw new Error(`no Claude Code, Codex or opencode session found for ${ctx.cwd}`);
@@ -159,7 +165,7 @@ async function switchUnlocked(ctx: Context, to: Tool, opts: SyncOptions): Promis
   const base = last && delta ? ((await target.locate(ctx.cwd, last.nativeId)) ?? undefined) : undefined;
 
   const git = await gitInfo(ctx.cwd);
-  const brief = await makeBrief(ctx, thread, to, git, base !== undefined);
+  const brief = await makeBrief(ctx, thread, to, git, base !== undefined, opts.summary);
   const wctx = { cwd: ctx.cwd, gitBranch: git?.branch, brief };
   const ref = base && delta ? await target.extend(base, delta, wctx) : await target.write(events, wctx);
   const mode = base ? 'extended' : 'synthesized';

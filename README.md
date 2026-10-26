@@ -31,6 +31,13 @@ session and prints the resume command instead of opening it; `--app` opens it in
 (Claude Desktop via `claude://resume?session=<id>`, Codex Desktop via `codex://threads/<id>`)
 instead of the terminal.
 
+`switch --summarize` (and `brief --summarize`) first asks the tool being left for a ~10-line summary
+of the work and adds it to the brief under "Summary from <tool>". The question never lands in your
+session: Claude runs `claude -p --resume <id> --fork-session --no-session-persistence --tools ''`,
+Codex runs `codex exec resume` against a copy of the rollout in a throwaway `CODEX_HOME`, opencode
+runs `opencode run --session <id> --fork` and the fork is deleted afterwards. If the call fails or
+takes over 120 s, wormhole warns on stderr and uses the plain brief.
+
 ## How it works
 
 Each project directory has one **thread** in `~/.wormhole/threads/<id>/` (override with `WORMHOLE_HOME`):

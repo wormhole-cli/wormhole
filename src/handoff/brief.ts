@@ -13,13 +13,15 @@ export interface BriefInput {
   git: GitInfo | null;
   /** The target's own earlier session is being continued, not a fresh import. */
   continuing?: boolean;
+  /** What the tool being left said about the session when asked (`--summarize`). */
+  summary?: { tool: Tool; text: string };
 }
 
 /**
  * Deterministic handoff note, appended as the last user turn of the synthesized
  * session so the target model reads it first on resume.
  */
-export function buildBrief({ events, from, to, git, continuing }: BriefInput): string {
+export function buildBrief({ events, from, to, git, continuing, summary }: BriefInput): string {
   const users = events.filter((e) => e.kind === 'user_text');
   const lastReply = events.findLast((e) => e.kind === 'assistant_text');
   const sources = [...new Set(from)].map((t) => TOOL_NAMES[t]).join(' and ') || 'another tool';
@@ -38,6 +40,7 @@ export function buildBrief({ events, from, to, git, continuing }: BriefInput): s
     'not tools you can call. Re-read files before editing them.',
   );
 
+  if (summary) out.push('', `## Summary from ${TOOL_NAMES[summary.tool]}`, summary.text);
   if (users[0]) out.push('', '## Original goal', oneLine(users[0].text, 600));
   const latest = users.at(-1);
   if (latest && latest !== users[0]) out.push('', '## Latest request', oneLine(latest.text, 600));

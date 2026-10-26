@@ -11,6 +11,7 @@ import {
   type Target,
   uninstall,
 } from './hooks/install.js';
+import { type Runner, runCapture, summarize } from './handoff/summary.js';
 import { launch, openUrl, shellLine } from './launch.js';
 import { activeSegment, type Event, eventTool, TOOLS, Tool } from './model/thread.js';
 
@@ -20,9 +21,11 @@ export interface Deps {
   launch: (argv: string[], cwd: string) => Promise<number>;
   openUrl: (url: string) => Promise<number>;
   readStdin: () => Promise<string>;
+  /** Runs a tool headless for `--summarize`. */
+  run: Runner;
 }
 
-const defaults: Deps = { context: defaultContext, launch, openUrl, readStdin };
+const defaults: Deps = { context: defaultContext, launch, openUrl, readStdin, run: runCapture };
 
 /** Run the CLI on a full argv (node, script, …args) and return its exit code. */
 export async function main(argv: string[] = process.argv, deps: Partial<Deps> = {}): Promise<number> {
@@ -60,6 +63,18 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
 
   const fromOption = () =>
     new Option('--from <tool>', 'tool that owns --session').argParser(parseTool);
+
+  /** The leaving tool's own summary of `ref`, or undefined (with a warning) when it cannot give one. */
+  async function askSummary(c: Context, ref: NativeRef | null, to?: Tool) {
+    if (!ref || ref.tool === to) return undefined;
+    console.error(`Asking ${ref.tool} for a summary of ${ref.nativeId}…`);
+    try {
+      return { tool: ref.tool, text: await summarize(ref, c.cwd, deps.run) };
+    } catch (err) {
+      console.error(`wormhole: no summary from ${ref.tool} (${err instanceof Error ? err.message : String(err)}); using the plain brief`);
+      return undefined;
+    }
+  }
 
   async function run(c: Context, ref: NativeRef, opts: { launch: boolean; app?: boolean }) {
     const a = adapter(c, ref.tool);
@@ -124,10 +139,13 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .option('-s, --session <id>', 'hand off this session instead of the newest (needs --from)')
     .option('--no-launch', 'write the session and print the command, but do not open it')
     .option('--app', 'open it in the desktop app (Claude Desktop, Codex Desktop) instead of the terminal')
-    .action(async (to: Tool, opts: { from?: Tool; session?: string; launch: boolean; app?: boolean }) => {
+    .option('--summarize', 'ask the tool being left for a short summary and add it to the brief')
+    .action(async (to: Tool, opts: { from?: Tool; session?: string; launch: boolean; app?: boolean; summarize?: boolean }) => {
       if (opts.session && !opts.from) throw new Error('--session needs --from');
       const c = ctx();
-      const result = await switchTo(c, to, { tool: opts.from, session: opts.session });
+      const from = { tool: opts.from, session: opts.session };
+      const summary = opts.summarize ? await askSummary(c, (await sync(c, from)).active, to) : undefined;
+      const result = await switchTo(c, to, { ...from, summary });
       report(result, to);
       await run(c, result.ref, opts);
     });
@@ -169,10 +187,12 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .command('brief')
     .description('Print the handoff note a switch would add')
     .addOption(new Option('--to <tool>', 'target tool').argParser(parseTool).default('codex'))
-    .action(async (opts: { to: Tool }) => {
+    .option('--summarize', 'ask the session in use for a short summary and add it')
+    .action(async (opts: { to: Tool; summarize?: boolean }) => {
       const c = ctx();
-      const { thread } = await sync(c);
-      console.log(await makeBrief(c, thread, opts.to));
+      const { thread, active } = await sync(c);
+      const summary = opts.summarize ? await askSummary(c, active, opts.to) : undefined;
+      console.log(await makeBrief(c, thread, opts.to, undefined, false, summary));
     });
 
   const hooks = program.command('hooks').description('Keep threads up to date automatically');
