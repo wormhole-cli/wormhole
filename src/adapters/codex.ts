@@ -10,6 +10,8 @@ import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.j
 
 /** How many rollout files detectLatest inspects before giving up. */
 const DETECT_SCAN_LIMIT = 1000;
+/** Matching sessions compared by mtime when picking the one in use. */
+const DETECT_MATCHES = 5;
 
 /** User-role messages Codex injects itself; not things the person typed. */
 const INJECTED_PREFIXES = [
@@ -37,17 +39,39 @@ export class CodexAdapter implements ToolAdapter {
     this.home = opts.home ?? process.env.CODEX_HOME ?? path.join(homedir(), '.codex');
   }
 
+  /**
+   * Files are named by start time, but an older session that was resumed later is
+   * the one in use, so the first few matches are compared by mtime.
+   */
   async detectLatest(cwd: string): Promise<NativeRef | null> {
+    const matches = await this.matching(cwd, () => true, DETECT_MATCHES);
+    return matches.reduce<NativeRef | null>((best, r) => (!best || r.updatedAt > best.updatedAt ? r : best), null);
+  }
+
+  async locate(cwd: string, nativeId: string): Promise<NativeRef | null> {
+    const [match] = await this.matching(cwd, (file) => file.endsWith(`-${nativeId}.jsonl`), 1);
+    return match ?? null;
+  }
+
+  private async matching(cwd: string, accept: (file: string) => boolean, limit: number): Promise<NativeRef[]> {
     const want = path.resolve(cwd);
+    const found: NativeRef[] = [];
     let scanned = 0;
     for await (const file of this.rolloutsNewestFirst()) {
-      if (++scanned > DETECT_SCAN_LIMIT) break;
+      if (++scanned > DETECT_SCAN_LIMIT || found.length >= limit) break;
+      if (!accept(file)) continue;
       const meta = await readSessionMeta(file);
-      if (meta && path.resolve(meta.cwd) === want) {
-        return { tool: 'codex', nativeId: meta.id, path: file, startedAt: meta.timestamp };
-      }
+      if (!meta || path.resolve(meta.cwd) !== want) continue;
+      const stat = await fs.stat(file);
+      found.push({
+        tool: 'codex',
+        nativeId: meta.id,
+        path: file,
+        startedAt: meta.timestamp,
+        updatedAt: stat.mtime.toISOString(),
+      });
     }
-    return null;
+    return found;
   }
 
   async read(ref: NativeRef, fromOffset = 0): Promise<ReadResult> {
@@ -130,7 +154,7 @@ export class CodexAdapter implements ToolAdapter {
     ];
     const file = path.join(this.home, 'sessions', ...datePath(now), `rollout-${localStamp(now)}-${id}.jsonl`);
     await atomicWrite(file, toJsonl(records));
-    return { tool: 'codex', nativeId: id, path: file, startedAt: iso };
+    return { tool: 'codex', nativeId: id, path: file, startedAt: iso, updatedAt: iso };
   }
 
   launchArgs(ref: NativeRef): string[] {

@@ -45,12 +45,22 @@ export class ClaudeAdapter implements ToolAdapter {
     const names = await fs.readdir(dir).catch(() => [] as string[]);
     const files = names.filter((n) => n.endsWith('.jsonl')).map((n) => path.join(dir, n));
     const newest = await newestByMtime(files);
-    if (!newest) return null;
+    return newest ? this.ref(newest.file, newest.mtime) : null;
+  }
+
+  async locate(cwd: string, nativeId: string): Promise<NativeRef | null> {
+    const file = path.join(this.projectDir(cwd), `${nativeId}.jsonl`);
+    const stat = await fs.stat(file).catch(() => null);
+    return stat ? this.ref(file, stat.mtime) : null;
+  }
+
+  private ref(file: string, mtime: Date): NativeRef {
     return {
       tool: 'claude',
-      nativeId: path.basename(newest.file, '.jsonl'),
-      path: newest.file,
-      startedAt: newest.mtime.toISOString(),
+      nativeId: path.basename(file, '.jsonl'),
+      path: file,
+      startedAt: mtime.toISOString(),
+      updatedAt: mtime.toISOString(),
     };
   }
 
@@ -58,7 +68,8 @@ export class ClaudeAdapter implements ToolAdapter {
     const { records, offset } = await readJsonlFrom(ref.path, fromOffset);
     const events: Event[] = [];
     for (const rec of records as ClaudeRecord[]) {
-      if (rec.isSidechain || rec.isMeta) continue;
+      // API error notices (model "<synthetic>") are Claude Code UI, not part of the conversation.
+      if (rec.isSidechain || rec.isMeta || rec.isApiErrorMessage) continue;
       const ts = rec.timestamp;
       if (rec.type === 'user' && rec.message) {
         const content = rec.message.content;
@@ -151,7 +162,8 @@ export class ClaudeAdapter implements ToolAdapter {
     });
     const file = path.join(this.projectDir(cwd), `${sessionId}.jsonl`);
     await atomicWrite(file, toJsonl(records));
-    return { tool: 'claude', nativeId: sessionId, path: file, startedAt: new Date(base).toISOString() };
+    const startedAt = new Date(base).toISOString();
+    return { tool: 'claude', nativeId: sessionId, path: file, startedAt, updatedAt: startedAt };
   }
 
   launchArgs(ref: NativeRef): string[] {
@@ -176,6 +188,7 @@ interface ClaudeRecord {
   isSidechain?: boolean;
   isMeta?: boolean;
   isCompactSummary?: boolean;
+  isApiErrorMessage?: boolean;
   message?: { role: string; content?: string | ClaudeBlock[] };
 }
 

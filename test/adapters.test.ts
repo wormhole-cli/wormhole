@@ -59,6 +59,11 @@ describe('ClaudeAdapter', () => {
           message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }] },
         },
         { type: 'assistant', isSidechain: true, message: { role: 'assistant', content: [{ type: 'text', text: 'sub' }] } },
+        {
+          type: 'assistant',
+          isApiErrorMessage: true,
+          message: { role: 'assistant', model: '<synthetic>', content: [{ type: 'text', text: 'Failed to authenticate' }] },
+        },
         { type: 'user', isCompactSummary: true, message: { role: 'user', content: 'summary so far' } },
         { type: 'system', subtype: 'compact_boundary' },
       ]),
