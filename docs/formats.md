@@ -121,3 +121,20 @@ every part.
   `{"type":"text","part":{"text":…}}`. The fork is a real session, so wormhole deletes it with
   `opencode session delete <fork id>`. Not run end to end here;
   the event shape for text parts is from opencode's run output, not a live capture.
+
+## Usage limits (read by `src/limits.ts`, seen 2026-10-26)
+
+- **Claude Code 2.1.29x** writes a synthetic assistant record when a request is refused: `model:
+  "<synthetic>"`, `isApiErrorMessage: true`, `error` (`rate_limit`, `server_error`,
+  `authentication_failed`, …), `apiErrorStatus: 429`. For a used-up window `apiError` is
+  `usage_limit_reached` and `quotaLimits` / `apiErrorParams.rate_limit_info` carry `status:
+  "rejected"`, `resetsAt` (unix seconds) and `rateLimitType` (`five_hour`); the text reads "You've hit
+  your session limit · resets 8:10pm (<tz>)". A model's own limit is `apiError:
+  "model_requires_usage_credits"` with no reset time. After the record come only bookkeeping lines
+  (`last-prompt`, `cost-state`, `queue-operation`, …). wormhole looks at the last main-chain assistant
+  record, reading the last 512 KB of the file first.
+- **Codex 0.16x** logs `event_msg` `token_count` after each model call with `rate_limits: {limit_id,
+  primary, secondary, credits, plan_type, rate_limit_reached_type, spend_control_reached}`; windows are
+  `{used_percent, window_minutes (300, 10080), resets_at (unix seconds)}`. The latest snapshot decides.
+  An `event_msg` `error` whose message mentions the usage limit, after that snapshot, also counts
+  (not seen in a captured session yet).

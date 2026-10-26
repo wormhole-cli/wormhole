@@ -11,6 +11,7 @@ wormhole log              # the thread, one line per event
 wormhole brief --to codex # the handoff note a switch would add
 wormhole import           # pull new turns without switching
 wormhole switch claude@work  # another Claude Code login (see Several accounts)
+wormhole next             # out of usage? carry on in the next account or tool with room
 ```
 
 ### Keeping threads current
@@ -65,6 +66,34 @@ Accounts are listed in `~/.wormhole/accounts.json`; `hooks install` also install
 folder, and status and log show `tool@account`. `--app` works only for the default folder:
 the desktop apps read only that one. opencode has no account folders.
 
+#### When a session hits its usage limit
+
+```bash
+wormhole next                          # limited? switch to the next account or tool with room, and open it
+wormhole next --force                  # move on even though it is not limited
+wormhole accounts fallback claude claude@work codex codex@alt   # the order to try (--default forgets it)
+wormhole accounts auto on              # let the hooks prepare the fallback session by themselves
+```
+
+wormhole reads the limit from the session files, never from an API. A Claude Code session is
+limited when its last reply is the error record Claude Code writes for a used-up window
+(`error: "rate_limit"`, `apiError: "usage_limit_reached"` with `quotaLimits.resetsAt`, or a model's
+own `model_requires_usage_credits`). A Codex session is limited when its latest `rate_limits`
+snapshot has `rate_limit_reached_type` set or a window at 100%. Once the reset time has passed it no
+longer counts. `wormhole status` marks limited sessions.
+
+`next` tries the `fallback` list in `~/.wormhole/accounts.json`, starting after the key in use and
+wrapping around; without a list, the other accounts of the same tool, then the other tools. It skips
+a candidate whose own latest session in this project is limited too (that is the only usage wormhole
+can see for it) and says why. It is its own command rather than a `switch` flag because wormhole
+picks the target: `switch <tool>` always goes where it is told.
+
+With `accounts auto on`, the Claude Code SessionEnd hook and the Codex notify hook check the session
+after importing it. If it is limited, they write the fallback session (once per limit hit) and
+nothing else: a hook has no terminal to open it in. `wormhole resume` and `status` then say
+`claude hit its limit at …; … continue with: wormhole resume`, until the new session is used. When
+nothing has room, the hook logs why to `~/.wormhole/hook.log`.
+
 ## How it works
 
 Each project directory has one **thread** in `~/.wormhole/threads/<id>/` (override with `WORMHOLE_HOME`):
@@ -113,6 +142,10 @@ As of 2026-10-26 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
 - opencode auto-import: a real `opencode run` updated the thread through the plugin.
 - Accounts: Claude Code → `codex@alt` (a second `CODEX_HOME`) → Claude Code; Codex resumed it from
   the other folder and its turn came back.
+- Limit detection, against real session files: Claude Code 2.1.296–2.1.299 writes the
+  `usage_limit_reached` records described above (5-hour window, with `quotaLimits.resetsAt`) and
+  `model_requires_usage_credits` for a model limit; sessions that hit a limit and later carried on
+  count as not limited.
 
 **Not yet verified with the real tools** (unit-tested only)
 
@@ -120,10 +153,17 @@ As of 2026-10-26 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
   question is whether the other account accepts the copied session's thinking blocks.
 - `--summarize` from opencode, and handing back from opencode with turns made there: not yet
   run with a working opencode model.
+- A Codex session at its limit: none has been captured yet, so
+  the 100% / `rate_limit_reached_type` case and the `error` event fallback are built from the
+  snapshot shape, not a captured limit. `wormhole next` and the auto hook were run against copies in
+  temporary folders, not against a real exhausted account.
 - Interactive `claude -r` picker listing (it stopped at the folder-trust prompt; `claude -c` uses the
   same lookup and finds the session).
 
 **Limits**
+
+- Limits are seen per session file, so a candidate account counts as having room unless its own
+  latest session in this project says otherwise; a limit hit in another project goes unnoticed.
 
 - `--app` only works for the default folders: the desktop apps read only `~/.claude` / `~/.codex`.
 - Codex locks a thread while a process has it open (`thread-writer-locks/`): a thread the CLI's
@@ -135,7 +175,6 @@ As of 2026-10-26 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
 
 **Ideas, not started**
 
-- When one account hits its usage limit, switch to another account automatically.
 - `wormhole doctor`: check hooks, logins and account folders in one go.
 
 ## Develop

@@ -1,10 +1,10 @@
 import { Command, CommanderError, InvalidArgumentError, Option } from 'commander';
 import { oneLine } from './adapters/render.js';
 import type { NativeRef } from './adapters/types.js';
-import { type Account, addAccount, loadAccounts, parseKey, removeAccount } from './accounts.js';
+import { type Account, addAccount, loadAccounts, loadFile, parseKey, removeAccount, setAuto, setFallback } from './accounts.js';
 import { adapter, type Context, defaultContext, makeBrief, refKey, type SwitchResult, switchTo, sync } from './core.js';
 import {
-  importFromHook,
+  handleHook,
   logHookError,
   parseClaudeHook,
   parseCodexNotify,
@@ -25,7 +25,9 @@ import {
   uninstall,
 } from './hooks/install.js';
 import { type Runner, runCapture, summarize } from './handoff/summary.js';
+import { fallbackNote, fallbackOrder, pickFallback, resets } from './fallback.js';
 import { launch, openUrl, shellLine } from './launch.js';
+import { sessionLimit } from './limits.js';
 import { activeSegment, type Event, eventTool, srcKey, TOOLS, Tool } from './model/thread.js';
 
 /** What the CLI reaches outside itself; tests replace these. */
@@ -128,13 +130,16 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
           const via = seg.derivedFrom ? `  (handed off from ${refKey(seg.derivedFrom)})` : '';
           console.log(`  ${seg.startedAt}  ${refKey(seg).padEnd(10)} ${seg.nativeId}${via}`);
         }
+        for (const line of await fallbackNote(c, thread)) console.log(line);
       } else {
         console.log(`No wormhole thread for ${c.cwd} yet.`);
       }
       console.log('newest native sessions:');
       for (const [key, a] of Object.entries(c.adapters)) {
         const ref = await a!.detectLatest(c.cwd);
-        console.log(`  ${key.padEnd(10)} ${ref ? `${ref.nativeId}  updated ${ref.updatedAt}` : '(none)'}`);
+        const limit = ref && (await sessionLimit(ref).catch(() => null));
+        const note = limit?.limited ? `  LIMITED (${limit.reason}${resets(limit.resetsAt)})` : '';
+        console.log(`  ${key.padEnd(10)} ${ref ? `${ref.nativeId}  updated ${ref.updatedAt}${note}` : '(none)'}`);
       }
     });
 
@@ -187,9 +192,38 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
         report(result, tool);
         return run(c, result.ref, opts);
       }
+      const { thread, active } = await sync(c);
+      if (!active) throw new Error(`no Claude Code, Codex or opencode session found for ${c.cwd}`);
+      for (const line of await fallbackNote(c, thread)) console.log(line);
+      await run(c, active, opts);
+    });
+
+  program
+    .command('next')
+    .description('If the session in use hit its usage limit, move it to the next account or tool with room')
+    .option('--force', 'move it even if it is not limited')
+    .option('--no-launch', 'write the session and print the command, but do not open it')
+    .option('--app', 'open it in the desktop app instead of the terminal')
+    .action(async (opts: { force?: boolean; launch: boolean; app?: boolean }) => {
+      const c = ctx();
       const { active } = await sync(c);
       if (!active) throw new Error(`no Claude Code, Codex or opencode session found for ${c.cwd}`);
-      await run(c, active, opts);
+      const key = refKey(active);
+      const limit = await sessionLimit(active);
+      const state = limit.limited ? `limited, ${limit.reason}${resets(limit.resetsAt)}` : `not limited, ${limit.reason}`;
+      console.log(`${key} ${active.nativeId}: ${state}`);
+      if (!limit.limited && !opts.force) {
+        console.log('Nothing to do; --force moves it anyway.');
+        return;
+      }
+      const pick = await pickFallback(c, key, loadFile().fallback);
+      for (const s of pick.skipped) console.log(`  skipped ${s.key}: ${s.why}`);
+      if (!pick.target) {
+        throw new Error('no other account or tool has room; add one (wormhole accounts add) or wait for the reset');
+      }
+      const result = await switchTo(c, pick.target, { tool: key, session: active.nativeId, ...(limit.limited ? { limit } : {}) });
+      report(result, pick.target);
+      await run(c, result.ref, opts);
     });
 
   program
@@ -281,6 +315,41 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
       const list = loadAccounts();
       if (list.length === 0) console.log('No accounts. Add one with: wormhole accounts add <name> --tool claude --dir <folder>');
       for (const a of list) console.log(`${`${a.tool}@${a.name}`.padEnd(20)} ${a.dir}`);
+      const { fallback, auto } = loadFile();
+      console.log(`fallback order: ${fallback ? fallback.join(' → ') : 'default (other accounts of the same tool, then the other tools)'}`);
+      console.log(`auto fallback from hooks: ${auto ? 'on' : 'off'}`);
+    });
+
+  accounts
+    .command('fallback')
+    .description('Set the order `wormhole next` tries when a session hits its usage limit')
+    .argument('[keys...]', 'tools or tool@account, best first (e.g. claude claude@work codex)')
+    .option('--default', 'forget the list: other accounts of the same tool, then the other tools')
+    .action(async (keys: string[], opts: { default?: boolean }) => {
+      if (keys.length > 0 || opts.default) await setFallback(opts.default ? [] : keys);
+      const { fallback } = loadFile();
+      if (fallback) {
+        console.log(`Fallback order: ${fallback.join(' → ')} (after the last, back to the first).`);
+      } else {
+        const keys = Object.keys(ctx().adapters);
+        console.log('Default fallback order: the other accounts of the same tool, then the other tools.');
+        for (const from of keys.filter((k) => !k.includes('@'))) console.log(`  from ${from}: ${fallbackOrder(from, keys).join(' → ')}`);
+      }
+    });
+
+  accounts
+    .command('auto')
+    .description('Let the hooks write the fallback session when a session hits its usage limit')
+    .argument('[state]', 'on or off')
+    .action(async (state: string | undefined) => {
+      if (state !== undefined && state !== 'on' && state !== 'off') throw new Error(`expected on or off, not ${state}`);
+      if (state) await setAuto(state === 'on');
+      const on = loadFile().auto === true;
+      console.log(`Auto fallback is ${on ? 'on' : 'off'}.`);
+      if (on) {
+        console.log('When a hook finds a session limited, it writes the fallback session (nothing is opened);');
+        console.log('`wormhole resume` then opens it. Needs `wormhole hooks install`.');
+      }
     });
 
   accounts
@@ -318,16 +387,16 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
       try {
         if (tool === 'claude') {
           const input = parseClaudeHook(await deps.readStdin());
-          if (input) await importFromHook(input, deps.context(input.cwd));
+          if (input) await handleHook(input, deps.context(input.cwd));
         } else if (tool === 'codex') {
           const payload = rest.at(-1);
           const then = rest[0] === THEN ? rest.slice(1, -1) : [];
           runChained(then, payload);
           const input = parseCodexNotify(payload);
-          if (input) await importFromHook(input, deps.context(input.cwd));
+          if (input) await handleHook(input, deps.context(input.cwd));
         } else if (tool === 'opencode') {
           const input = parseOpencodeHook(rest.at(-1));
-          if (input) await importFromHook(input, deps.context(input.cwd));
+          if (input) await handleHook(input, deps.context(input.cwd));
         }
       } catch (err) {
         await logHookError(err);
