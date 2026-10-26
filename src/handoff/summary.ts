@@ -1,8 +1,8 @@
-import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import type { NativeRef } from '../adapters/types.js';
+import { spawnProgram } from '../proc.js';
 
 export const SUMMARY_TIMEOUT_MS = 120_000;
 
@@ -115,7 +115,7 @@ export function runCapture(argv: string[], { cwd, timeoutMs, env }: RunOptions):
   const [bin, ...args] = argv;
   if (!bin) return Promise.resolve({ code: 1, stdout: '', stderr: 'empty command' });
   return new Promise((resolve, reject) => {
-    const child = spawn(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawnProgram(bin, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -123,8 +123,8 @@ export function runCapture(argv: string[], { cwd, timeoutMs, env }: RunOptions):
       timedOut = true;
       child.kill('SIGKILL');
     }, timeoutMs);
-    child.stdout.on('data', (d: Buffer) => (stdout += d.toString()));
-    child.stderr.on('data', (d: Buffer) => (stderr += d.toString()));
+    child.stdout!.on('data', (d: Buffer) => (stdout += d.toString()));
+    child.stderr!.on('data', (d: Buffer) => (stderr += d.toString()));
     child.on('error', (err: NodeJS.ErrnoException) => {
       clearTimeout(timer);
       reject(err.code === 'ENOENT' ? new Error(`${bin} is not on PATH`) : err);

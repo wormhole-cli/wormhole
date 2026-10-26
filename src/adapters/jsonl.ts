@@ -1,6 +1,5 @@
-import { execFile } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import { promisify } from 'node:util';
+import { capture } from '../proc.js';
 
 /**
  * Read complete JSONL lines starting at a byte offset. A trailing partial line
@@ -39,13 +38,9 @@ export function toJsonl(records: unknown[]): string {
 
 /** First token of `<bin> --version`, or the fallback when the binary is missing. */
 export async function cliVersion(bin: string, fallback: string): Promise<string> {
-  try {
-    const { stdout } = await promisify(execFile)(bin, ['--version'], { timeout: 10_000 });
-    const match = stdout.match(/\d+\.\d+\.\d+[\w.-]*/);
-    return match?.[0] ?? fallback;
-  } catch {
-    return fallback;
-  }
+  const r = await capture(bin, ['--version']);
+  if (!r || r.code !== 0) return fallback;
+  return r.stdout.match(/\d+\.\d+\.\d+[\w.-]*/)?.[0] ?? fallback;
 }
 
 /** Newest file by mtime among the given paths. */

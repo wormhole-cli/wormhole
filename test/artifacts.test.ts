@@ -124,6 +124,7 @@ describe('artifacts', () => {
     const { ref } = await switchTo(c, 'codex');
     const rollout = await readFile(ref.path, 'utf8');
     const [name] = await readdir(artifactsDir());
-    expect(rollout).toContain(`(full output: ${path.join(artifactsDir(), name!)})`);
+    // The rollout is JSON: compare against the path as JSON writes it (backslashes doubled on Windows).
+    expect(rollout).toContain(`(full output: ${JSON.stringify(path.join(artifactsDir(), name!)).slice(1, -1)})`);
   });
 });

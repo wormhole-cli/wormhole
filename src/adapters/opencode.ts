@@ -1,10 +1,11 @@
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import type { Event } from '../model/thread.js';
+import { capture, spawnProgram } from '../proc.js';
 import { CONTINUED, toTurns, type Turn } from './render.js';
 import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.js';
 
@@ -339,8 +340,6 @@ async function readConfigModel(): Promise<string | undefined> {
   }
 }
 
-const run = promisify(execFile);
-
 /**
  * opencode exits before draining a stdout pipe, so large output arrives cut at 8 KB.
  * Pointing stdout at a file avoids that.
@@ -350,7 +349,7 @@ async function stdoutViaFile(bin: string, args: string[], cwd: string): Promise<
   const fh = await fs.open(file, 'w', 0o600);
   try {
     const code = await new Promise<number | null>((resolve, reject) => {
-      const child = spawn(bin, args, { cwd, stdio: ['ignore', fh.fd, 'ignore'], timeout: 60_000 });
+      const child = spawnProgram(bin, args, { cwd, stdio: ['ignore', fh.fd, 'ignore'], timeout: 60_000 });
       child.on('error', reject);
       child.on('exit', resolve);
     });
@@ -381,7 +380,9 @@ const execCli: OpencodeCli = {
     const file = path.join(tmpdir(), `wormhole-${session.info.id}.json`);
     await fs.writeFile(file, JSON.stringify(session), { mode: 0o600 });
     try {
-      await run('opencode', ['import', file], { cwd, timeout: 60_000 });
+      const r = await capture('opencode', ['import', file], { cwd, timeoutMs: 60_000 });
+      if (!r) throw new Error('opencode is not on PATH');
+      if (r.code !== 0) throw new Error(`opencode import exited with ${r.code}: ${r.stderr.trim().split('\n').at(-1) ?? ''}`);
     } finally {
       await fs.rm(file, { force: true });
     }

@@ -1,10 +1,10 @@
-import { execFile } from 'node:child_process';
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { type Account, ACCOUNT_ENV, type AccountTool, loadAccounts } from './accounts.js';
 import { chainedFrom, findNotify, OPENCODE_MARKER } from './hooks/install.js';
 import { Thread } from './model/thread.js';
+import { capture, findOnPath } from './proc.js';
 
 /** `wormhole doctor` only looks: every probe reads, none writes. */
 
@@ -51,22 +51,11 @@ export function realProbes(): Probes {
     env,
     home: homedir(),
     now: Date.now,
-    async which(bin) {
-      for (const dir of (env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
-        const file = path.join(dir, bin);
-        if (await fs.access(file, fsConstants.X_OK).then(() => true, () => false)) return file;
-      }
-      return null;
+    which: (bin) => findOnPath(bin, env),
+    async exec(bin, args, extra) {
+      const r = await capture(bin, args, { env: { ...env, ...extra }, timeoutMs: EXEC_TIMEOUT_MS });
+      return r && { code: r.code, stdout: r.stdout, stderr: r.timedOut ? 'timed out' : r.stderr };
     },
-    exec: (bin, args, extra) =>
-      new Promise((resolve) => {
-        execFile(bin, args, { timeout: EXEC_TIMEOUT_MS, env: { ...env, ...extra } }, (err, stdout, stderr) => {
-          const e = err as (NodeJS.ErrnoException & { code?: number | string; killed?: boolean }) | null;
-          if (e && typeof e.code === 'string') return resolve(null);
-          const code = e ? (typeof e.code === 'number' ? e.code : 1) : 0;
-          resolve({ code, stdout: String(stdout), stderr: e?.killed ? 'timed out' : String(stderr) });
-        });
-      }),
     readFile: (file) => fs.readFile(file, 'utf8').catch(() => null),
     stat: (file) =>
       fs.stat(file).then(

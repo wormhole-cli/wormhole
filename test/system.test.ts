@@ -5,7 +5,8 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cliVersion, newestByMtime } from '../src/adapters/jsonl.js';
 import { gitInfo } from '../src/handoff/git.js';
-import { launch, openUrl, shellLine } from '../src/launch.js';
+import { launch, openUrl, shellLine, splitEnv } from '../src/launch.js';
+import { capture, findOnPath } from '../src/proc.js';
 
 let root: string;
 
@@ -35,8 +36,14 @@ describe('launch', () => {
   });
 
   it('quotes arguments for printing', () => {
-    expect(shellLine(['codex', 'resume', 'abc-123'])).toBe('codex resume abc-123');
-    expect(shellLine(['open', "it's here", 'a b'])).toBe(`open 'it'\\''s here' 'a b'`);
+    expect(shellLine(['codex', 'resume', 'abc-123'], 'linux')).toBe('codex resume abc-123');
+    expect(shellLine(['open', "it's here", 'a b'], 'darwin')).toBe(`open 'it'\\''s here' 'a b'`);
+    expect(shellLine(['env', 'CODEX_HOME=/x/y', 'codex', 'resume', 'id'], 'linux')).toBe('env CODEX_HOME=/x/y codex resume id');
+    // PowerShell on Windows: variables set first, single quotes doubled.
+    expect(shellLine(['env', "CLAUDE_CONFIG_DIR=C:\\U\\o'k", 'claude', '--resume', 'id'], 'win32')).toBe(
+      "$env:CLAUDE_CONFIG_DIR='C:\\U\\o''k'; claude --resume id",
+    );
+    expect(shellLine(['codex', 'it is'], 'win32')).toBe("codex 'it is'");
   });
 
   it('opens links with the platform opener', async () => {
@@ -102,5 +109,43 @@ describe('gitInfo', () => {
     expect(info.status).toHaveLength(41);
     expect(info.status.at(-1)).toBe('… 5 more');
     expect(info.recentCommits).toEqual([]);
+  });
+});
+
+describe('finding and running programs', () => {
+  it('finds executables on PATH, with PATHEXT extensions on Windows', async () => {
+    const { chmod } = await import('node:fs/promises');
+    await writeFile(path.join(root, 'tool'), '');
+    await writeFile(path.join(root, 'tool.CMD'), '');
+    // POSIX: only an executable file counts (Windows has no execute bit to check).
+    if (process.platform !== 'win32') {
+      expect(await findOnPath('tool', { PATH: root }, 'linux')).toBeNull();
+      await chmod(path.join(root, 'tool'), 0o755);
+      expect(await findOnPath('tool', { PATH: root }, 'linux')).toBe(path.join(root, 'tool'));
+    }
+    // Windows: a name matches with an extension from PATHEXT; `Path` works as the variable name.
+    expect(await findOnPath('tool', { Path: root, PATHEXT: '.EXE;.CMD' }, 'win32')).toBe(path.join(root, 'tool.cmd'));
+    expect(await findOnPath('tool.CMD', { Path: root }, 'win32')).toBe(path.join(root, 'tool.CMD'));
+    expect(await findOnPath('missing', { PATH: root }, 'win32')).toBeNull();
+    expect(await findOnPath('tool', {}, 'linux')).toBeNull();
+  });
+
+  it('captures output, exit codes and timeouts; null for a missing program', async () => {
+    expect(await capture(process.execPath, ['-e', 'process.stdout.write("hi"); process.exit(2)'])).toMatchObject({ code: 2, stdout: 'hi', timedOut: false });
+    expect(await capture(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], { timeoutMs: 200 })).toMatchObject({ timedOut: true });
+    expect(await capture('wormhole-no-such-program', [])).toBeNull();
+  });
+
+  it('launches with variables from a leading env prefix', async () => {
+    const out = path.join(root, 'env.txt');
+    const code = await launch(
+      ['env', 'WORMHOLE_TEST_A=1', `WORMHOLE_TEST_B=x y`, process.execPath, '-e', `require('fs').writeFileSync(${JSON.stringify(out)}, process.env.WORMHOLE_TEST_A + process.env.WORMHOLE_TEST_B)`],
+      root,
+    );
+    expect(code).toBe(0);
+    const { readFileSync } = await import('node:fs');
+    expect(readFileSync(out, 'utf8')).toBe('1x y');
+    expect(splitEnv(['env', 'A=1', 'cmd', 'B=2'])).toEqual({ env: { A: '1' }, command: ['cmd', 'B=2'] });
+    expect(splitEnv(['cmd'])).toEqual({ env: {}, command: ['cmd'] });
   });
 });

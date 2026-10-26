@@ -1,6 +1,7 @@
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { findOnPath } from '../proc.js';
 import { atomicWrite } from '../store/store.js';
 import { THEN } from './handle.js';
 
@@ -27,10 +28,7 @@ export function opencodePluginPath(): string {
 
 /** Whether `opencode` is an executable on PATH: the default install set only includes tools that are there. */
 export async function opencodeOnPath(): Promise<boolean> {
-  for (const dir of (process.env.PATH ?? '').split(path.delimiter).filter(Boolean)) {
-    if (await fs.access(path.join(dir, 'opencode'), fsConstants.X_OK).then(() => true, () => false)) return true;
-  }
-  return false;
+  return (await findOnPath('opencode')) !== null;
 }
 
 // ---- opencode: a global plugin ----

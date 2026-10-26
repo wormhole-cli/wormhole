@@ -9,6 +9,7 @@ import { type Deps, main } from '../src/cli.js';
 import { type Context, switchTo, sync } from '../src/core.js';
 import { fallbackNote, fallbackOrder, pickFallback } from '../src/fallback.js';
 import { fallbackFromHook } from '../src/hooks/handle.js';
+import { shellLine } from '../src/launch.js';
 import { Store } from '../src/store/store.js';
 import {
   claudeReply,
@@ -262,7 +263,7 @@ describe('wormhole next', () => {
     out = [];
     expect(await run('resume', '--no-launch')).toBe(0);
     expect(text()).toContain(`wormhole wrote claude@work session ${copy} to carry on; continue with: wormhole resume`);
-    expect(text()).toContain(`(or: env CLAUDE_CONFIG_DIR=${dir('claude-work')} claude --resume ${copy})`);
+    expect(text()).toContain(`(or: ${shellLine(['env', `CLAUDE_CONFIG_DIR=${dir('claude-work')}`, 'claude', '--resume', copy])})`);
     expect(launched).toEqual([]);
 
     // Once the fallback session has turns of its own, the note goes away.

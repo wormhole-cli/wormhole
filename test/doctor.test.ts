@@ -258,7 +258,7 @@ describe('hooks', () => {
   it('checks the Codex notify program wormhole chains', async () => {
     const prog = path.join(root, 'notifier');
     await writeFile(prog, '');
-    const before = `notify = ["${prog}", "turn-ended"]\n`;
+    const before = `notify = [${JSON.stringify(prog)}, "turn-ended"]\n`;
     await put(path.join(codexDir(), 'config.toml.before-wormhole'), before);
     await put(path.join(codexDir(), 'config.toml'), withCodexNotify(before, self));
     expect(byName(await runDoctor(probes()), 'codex hook')).toMatchObject({ level: 'pass', detail: expect.stringContaining('still runs notifier') });

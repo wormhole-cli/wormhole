@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { loadFile } from '../accounts.js';
@@ -6,6 +5,7 @@ import type { NativeRef, ToolAdapter } from '../adapters/types.js';
 import { type Context, defaultContext, refKey, switchTo, sync } from '../core.js';
 import { pickFallback } from '../fallback.js';
 import { sessionLimit } from '../limits.js';
+import { spawnProgram } from '../proc.js';
 import type { Tool } from '../model/thread.js';
 import { wormholeHome } from '../store/store.js';
 
@@ -121,7 +121,7 @@ export async function handleHook(input: HookInput, ctx: Context): Promise<void> 
 export function runChained(argv: string[], payload: string | undefined) {
   const [bin, ...args] = argv;
   if (!bin) return;
-  const child = spawn(bin, payload === undefined ? args : [...args, payload], { detached: true, stdio: 'ignore' });
+  const child = spawnProgram(bin, payload === undefined ? args : [...args, payload], { detached: true, stdio: 'ignore' });
   child.on('error', () => {});
   child.unref();
 }

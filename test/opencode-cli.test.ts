@@ -41,8 +41,14 @@ beforeEach(async () => {
   store = path.join(root, 'store');
   const bin = path.join(root, 'bin');
   await Promise.all([mkdir(cwd), mkdir(store), mkdir(bin)]);
-  await writeFile(path.join(bin, 'opencode'), FAKE);
-  await chmod(path.join(bin, 'opencode'), 0o755);
+  // An executable script on POSIX; on Windows a .cmd wrapper, as npm installs CLIs there.
+  await writeFile(path.join(bin, 'opencode.js'), FAKE.replace(/^#!.*\n/, ''));
+  if (process.platform === 'win32') {
+    await writeFile(path.join(bin, 'opencode.cmd'), `@"${process.execPath}" "%~dp0opencode.js" %*\r\n`);
+  } else {
+    await writeFile(path.join(bin, 'opencode'), FAKE);
+    await chmod(path.join(bin, 'opencode'), 0o755);
+  }
   env = { ...process.env };
   process.env.PATH = `${bin}${path.delimiter}${process.env.PATH}`;
   process.env.FAKE_OPENCODE_DIR = store;

@@ -38,7 +38,7 @@ describe('config paths', () => {
     expect(claudeSettingsPath()).toBe(path.join(root, 'claude', 'settings.json'));
     expect(codexConfigPath()).toBe(path.join(root, 'codex', 'config.toml'));
     process.env.CODEX_HOME = '';
-    expect(codexConfigPath()).toMatch(/\.codex\/config\.toml$/);
+    expect(codexConfigPath().replaceAll('\\', '/')).toMatch(/\.codex\/config\.toml$/);
   });
 
   it('names the running node and script for hooks', () => {
@@ -110,7 +110,7 @@ describe('opencode plugin on disk', () => {
   it('follows XDG_CONFIG_HOME', () => {
     expect(opencodePluginPath()).toBe(path.join(root, 'xdg', 'opencode', 'plugins', 'wormhole.js'));
     process.env.XDG_CONFIG_HOME = '';
-    expect(opencodePluginPath()).toMatch(/\.config\/opencode\/plugins\/wormhole\.js$/);
+    expect(opencodePluginPath().replaceAll('\\', '/')).toMatch(/\.config\/opencode\/plugins\/wormhole\.js$/);
   });
 
   it('writes, reports and removes only its own plugin file', async () => {
@@ -146,9 +146,11 @@ describe('opencode plugin on disk', () => {
     await mkdir(bin);
     process.env.PATH = bin;
     expect(await opencodeOnPath()).toBe(false);
+    // A plain file does not count: no execute bit, or (Windows) no PATHEXT extension.
     await writeFile(path.join(bin, 'opencode'), '#!/bin/sh\n');
     expect(await opencodeOnPath()).toBe(false);
-    await chmod(path.join(bin, 'opencode'), 0o755);
+    if (process.platform === 'win32') await writeFile(path.join(bin, 'opencode.cmd'), '@exit /b 0\r\n');
+    else await chmod(path.join(bin, 'opencode'), 0o755);
     expect(await opencodeOnPath()).toBe(true);
     delete process.env.PATH;
     expect(await opencodeOnPath()).toBe(false);

@@ -31,7 +31,8 @@ describe('ClaudeAdapter', () => {
   const claude = () => new ClaudeAdapter({ configDir: root, version: '9.9.9' });
 
   it('encodes the project folder like Claude Code', () => {
-    expect(encodeCwd('/Users/a/my.proj')).toBe('-Users-a-my-proj');
+    if (process.platform === 'win32') expect(encodeCwd('C:\\Users\\a\\my.proj')).toBe('C--Users-a-my-proj');
+    else expect(encodeCwd('/Users/a/my.proj')).toBe('-Users-a-my-proj');
   });
 
   it('reads text, tool calls and results; skips thinking, meta and sidechains', async () => {
@@ -91,7 +92,8 @@ describe('ClaudeAdapter', () => {
   it('writes a linked, alternating transcript in the project folder', async () => {
     const ref = await claude().write(sample, { cwd, gitBranch: 'main', brief: 'BRIEF' });
     expect(ref.path).toBe(path.join(root, 'projects', encodeCwd(cwd), `${ref.nativeId}.jsonl`));
-    expect((await stat(ref.path)).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX permission bits.
+    if (process.platform !== 'win32') expect((await stat(ref.path)).mode & 0o777).toBe(0o600);
     const recs = await lines(ref.path);
     expect(recs.map((r) => r.type)).toEqual(['user', 'assistant', 'user', 'assistant']);
     expect(recs[0].parentUuid).toBeNull();
@@ -182,7 +184,7 @@ describe('CodexAdapter', () => {
     const recs = await lines(ref.path);
     expect(recs[0]).toMatchObject({
       type: 'session_meta',
-      payload: { id: ref.nativeId, cwd, cli_version: '0.159.2', source: 'cli', originator: 'codex_cli_rs', history_mode: 'paginated' },
+      payload: { id: ref.nativeId, cwd: path.resolve(cwd), cli_version: '0.159.2', source: 'cli', originator: 'codex_cli_rs', history_mode: 'paginated' },
     });
     // Codex Desktop pages history by line number and indexes turns from these events.
     expect(recs.map((r) => r.ordinal)).toEqual(recs.map((_, i) => i));

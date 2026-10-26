@@ -372,13 +372,15 @@ describe('wormhole hooks', () => {
       process.argv[1] = script;
     });
     await mkdir(path.join(root, 'bin'));
-    await writeFile(path.join(root, 'bin', 'opencode'), '#!/bin/sh\n');
-    await chmod(path.join(root, 'bin', 'opencode'), 0o755);
+    // An executable opencode: a .cmd file on Windows, a +x file elsewhere.
+    const fakeOpencode = path.join(root, 'bin', process.platform === 'win32' ? 'opencode.cmd' : 'opencode');
+    await writeFile(fakeOpencode, process.platform === 'win32' ? '@exit /b 0\r\n' : '#!/bin/sh\n');
+    await chmod(fakeOpencode, 0o755);
     const plugin = path.join(root, 'xdg', 'opencode', 'plugins', 'wormhole.js');
 
     expect(await run('hooks', 'install')).toBe(0);
     expect(text()).toContain(`opencode: plugin ${plugin}`);
-    expect(await readFile(plugin, 'utf8')).toContain('"/opt/wormhole/bin/wormhole.js"');
+    expect(await readFile(plugin, 'utf8')).toContain(JSON.stringify(path.resolve('/opt/wormhole/bin/wormhole.js')));
     out = [];
     expect(await run('hooks', 'status')).toBe(0);
     expect(text()).toMatch(/opencode\s+installed/);
