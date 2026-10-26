@@ -127,7 +127,7 @@ describe('switchTo', () => {
     expect(recs[2].message.content[0]).toMatchObject({ type: 'tool_result', tool_use_id: 'toolu_open', is_error: true });
   });
 
-  it('extends a Codex session too, numbering lines when the original does', async () => {
+  it('extends a Codex session too, numbering every line', async () => {
     const dir = path.join(root, 'codex', 'sessions', '2026', '10', '25');
     await mkdir(dir, { recursive: true });
     const id = '01a17000-0000-7000-8000-000000000001';
@@ -151,9 +151,14 @@ describe('switchTo', () => {
     expect(lines.map((l) => l.ordinal)).toEqual(lines.map((_, i) => i));
     expect(lines[3].payload).toMatchObject({ type: 'function_call_output', call_id: 'call_open' });
     // Only Claude's turn is added before the brief; Codex's own history is not repeated.
-    expect(lines[4].payload.content[0].text).toBe('[The conversation continued in another tool:]');
-    expect(lines[5].payload.content[0].text).toBe('claude was here');
-    expect(lines[6].payload.content[0].text).toContain('back in this session after work continued in Claude Code');
+    const added = lines.slice(4).filter((l) => l.type === 'response_item' && l.payload.type === 'message');
+    expect(added.map((l) => l.payload.content[0].text)).toEqual([
+      '[The conversation continued in another tool:]',
+      'claude was here',
+      expect.stringContaining('back in this session after work continued in Claude Code'),
+      'Understood. I have the context above and am ready to continue.',
+    ]);
+    expect(lines[0].payload.history_mode).toBe('paginated');
   });
 
   it('falls back to a full session for threads recorded before source tagging', () => {

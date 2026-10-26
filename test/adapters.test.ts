@@ -181,16 +181,27 @@ describe('CodexAdapter', () => {
     const recs = await lines(ref.path);
     expect(recs[0]).toMatchObject({
       type: 'session_meta',
-      payload: { id: ref.nativeId, cwd, cli_version: '0.159.2', source: 'cli', originator: 'codex_cli_rs' },
+      payload: { id: ref.nativeId, cwd, cli_version: '0.159.2', source: 'cli', originator: 'codex_cli_rs', history_mode: 'paginated' },
     });
-    expect(recs.slice(1).map((r) => `${r.payload.role}:${r.payload.content[0].type}`)).toEqual([
+    // Codex Desktop pages history by line number and indexes turns from these events.
+    expect(recs.map((r) => r.ordinal)).toEqual(recs.map((_, i) => i));
+    const messages = recs.filter((r) => r.type === 'response_item' && r.payload.type === 'message');
+    expect(messages.map((r) => `${r.payload.role}:${r.payload.content[0].type}`)).toEqual([
       'user:input_text',
       'assistant:output_text',
       'user:input_text',
       'assistant:output_text',
     ]);
+    const events = (t: string) => recs.filter((r) => r.type === 'event_msg' && r.payload.type === t);
+    expect(events('task_started')).toHaveLength(2);
+    expect(events('task_complete')).toHaveLength(2);
+    expect(events('item_completed').map((r) => r.payload.item.type)).toEqual(['UserMessage', 'AgentMessage', 'UserMessage', 'AgentMessage']);
+    expect(recs.filter((r) => r.type === 'turn_context')).toHaveLength(2);
+    const turnIds = new Set(events('item_completed').map((r) => r.payload.turn_id));
+    expect(turnIds).toEqual(new Set(events('task_started').map((r) => r.payload.turn_id)));
     expect((await a.detectLatest(cwd))?.nativeId).toBe(ref.nativeId);
-    const { events } = await a.read(ref);
-    expect(events[0]).toMatchObject({ kind: 'user_text', text: 'add a hello script' });
+    const read = await a.read(ref);
+    expect(read.events.filter((e) => e.kind === 'user_text')).toHaveLength(2);
+    expect(read.events[0]).toMatchObject({ kind: 'user_text', text: 'add a hello script' });
   });
 });

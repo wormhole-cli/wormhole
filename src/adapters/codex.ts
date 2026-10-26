@@ -116,26 +116,37 @@ export class CodexAdapter implements ToolAdapter {
     return { events, offset };
   }
 
+  /**
+   * Sessions are written the way Codex Desktop writes them: numbered lines,
+   * `history_mode: "paginated"`, and turn events around each exchange. The desktop
+   * app shows a thread from the turns it indexes out of those events; a file with
+   * only response items resumes in the CLI but shows no messages in the app.
+   */
   async write(events: Event[], ctx: WriteContext): Promise<NativeRef> {
     const now = new Date();
     const id = uuidv7(now.getTime());
     const iso = now.toISOString();
+    const cwd = path.resolve(ctx.cwd);
     const version = this.opts.cliVersion ?? (await cliVersion('codex', '0.0.0'));
     const meta = {
       timestamp: iso,
       type: 'session_meta',
       payload: {
         id,
+        session_id: id,
         timestamp: iso,
-        cwd: path.resolve(ctx.cwd),
+        cwd,
         originator: 'codex_cli_rs',
         cli_version: version,
         source: 'cli',
+        thread_source: 'user',
         model_provider: 'openai',
+        history_mode: 'paginated',
         ...(ctx.gitBranch ? { git: { branch: ctx.gitBranch } } : {}),
       },
     };
-    return this.save(now, id, toJsonl([meta, ...messageLines(toTurns(events, ctx.brief), iso)]));
+    const turns = turnLines(toTurns(events, ctx.brief), { threadId: id, cwd, model: await this.configModel(), ms: now.getTime() });
+    return this.save(now, id, toJsonl(numbered([meta, ...turns])));
   }
 
   async extend(base: NativeRef, events: Event[], ctx: WriteContext): Promise<NativeRef> {
@@ -161,25 +172,34 @@ export class CodexAdapter implements ToolAdapter {
           output: 'Not completed: the session was handed off to another tool.',
         },
       }));
-    const appended: Record<string, unknown>[] = [...closing, ...messageLines(toTurns(events, ctx.brief, CONTINUED), iso)];
-
-    // Newer writers number every line; keep the sequence going when they do.
-    const ordinals = lines.map((l) => l.ordinal).filter((o): o is number => typeof o === 'number');
-    if (ordinals.length > 0) {
-      let next = Math.max(...ordinals) + 1;
-      for (const line of appended) line.ordinal = next++;
-    }
 
     const id = uuidv7(now.getTime());
     // The id appears in session_meta and in per-turn records; a copy under a new id is a fork.
-    const copy = toJsonl(lines.map((line) => {
+    const copy = lines.map((line) => {
       const value = structuredClone(line);
-      if (value.type === 'session_meta' && value.payload?.id === base.nativeId) value.payload.id = id;
+      if (value.type === 'session_meta' && value.payload?.id === base.nativeId) {
+        value.payload.id = id;
+        value.payload.history_mode = 'paginated';
+      }
       if (value.payload?.session_id === base.nativeId) value.payload.session_id = id;
       if (value.payload?.thread_id === base.nativeId) value.payload.thread_id = id;
       return value;
-    }));
-    return this.save(now, id, (copy.endsWith('\n') ? copy : `${copy}\n`) + toJsonl(appended));
+    });
+    const model = lines.findLast((l) => l.type === 'turn_context' && l.payload?.model)?.payload?.model ?? (await this.configModel());
+    const turns = turnLines(toTurns(events, ctx.brief, CONTINUED), { threadId: id, cwd: path.resolve(ctx.cwd), model, ms: now.getTime() });
+    // Older CLI files have no line numbers; the desktop app pages history by them.
+    return this.save(now, id, toJsonl(numbered([...copy, ...closing, ...turns])));
+  }
+
+  /** Top-level `model` from config.toml, used for written turn contexts. */
+  private async configModel(): Promise<string | undefined> {
+    const toml = await fs.readFile(path.join(this.home, 'config.toml'), 'utf8').catch(() => '');
+    for (const line of toml.split('\n')) {
+      if (/^\s*\[/.test(line)) break;
+      const m = line.match(/^\s*model\s*=\s*"([^"]+)"/);
+      if (m) return m[1];
+    }
+    return undefined;
   }
 
   private async save(now: Date, id: string, content: string): Promise<NativeRef> {
@@ -191,6 +211,11 @@ export class CodexAdapter implements ToolAdapter {
 
   launchArgs(ref: NativeRef): string[] {
     return ['codex', 'resume', ref.nativeId];
+  }
+
+  /** Opens the thread in Codex Desktop, which indexes the rollout on the way. */
+  appUrl(ref: NativeRef): string {
+    return `codex://threads/${ref.nativeId}`;
   }
 
   /** sessions/YYYY/MM/DD/rollout-*.jsonl, newest day and newest file first. */
@@ -213,6 +238,8 @@ export class CodexAdapter implements ToolAdapter {
 
 interface CodexPayload {
   type?: string;
+  model?: string;
+  history_mode?: string;
   role?: string;
   content?: unknown;
   name?: string;
@@ -264,16 +291,67 @@ async function readSessionMeta(
   }
 }
 
-function messageLines(turns: Turn[], iso: string): Record<string, unknown>[] {
-  return turns.map((turn) => ({
-    timestamp: iso,
-    type: 'response_item',
-    payload: {
-      type: 'message',
-      role: turn.role,
-      content: [{ type: turn.role === 'user' ? 'input_text' : 'output_text', text: turn.text }],
-    },
-  }));
+/** Number every line from 0, as Codex Desktop does. */
+function numbered(lines: object[]): object[] {
+  return lines.map((line, ordinal) => {
+    const { timestamp, ordinal: _old, ...rest } = line as Record<string, unknown>;
+    return { timestamp, ordinal, ...rest };
+  });
+}
+
+/**
+ * Each user turn and the reply after it become one Codex turn: task_started, a
+ * turn_context, the response items, an item_completed per message, task_complete.
+ */
+function turnLines(
+  turns: Turn[],
+  at: { threadId: string; cwd: string; model?: string; ms: number },
+): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  let ms = at.ms;
+  const tick = () => ++ms;
+  const line = (type: string, payload: Record<string, unknown>) =>
+    out.push({ timestamp: new Date(ms).toISOString(), type, payload });
+
+  for (let i = 0; i < turns.length; i++) {
+    const user = turns[i]!;
+    const reply = turns[i + 1]?.role === 'assistant' ? turns[++i] : undefined;
+    const turn = uuidv7(tick());
+    const started = Math.floor(ms / 1000);
+    line('event_msg', { type: 'task_started', turn_id: turn, root_turn_id: turn, started_at: started, collaboration_mode_kind: 'default' });
+    line('turn_context', { turn_id: turn, root_turn_id: turn, cwd: at.cwd, ...(at.model ? { model: at.model } : {}), summary: 'auto' });
+    line('response_item', { type: 'message', role: 'user', id: `msg_${uuidv7(tick())}`, content: [{ type: 'input_text', text: user.text }] });
+    line('event_msg', {
+      type: 'item_completed',
+      thread_id: at.threadId,
+      turn_id: turn,
+      item: { type: 'UserMessage', id: uuidv7(tick()), content: [{ type: 'text', text: user.text, text_elements: [] }] },
+      started_at_ms: ms,
+      completed_at_ms: ms,
+    });
+    if (reply) {
+      const msgId = `msg_${uuidv7(tick())}`;
+      line('response_item', { type: 'message', role: 'assistant', id: msgId, content: [{ type: 'output_text', text: reply.text }], phase: 'final_answer', status: 'completed' });
+      line('event_msg', {
+        type: 'item_completed',
+        thread_id: at.threadId,
+        turn_id: turn,
+        item: { type: 'AgentMessage', id: msgId, content: [{ type: 'Text', text: reply.text }], phase: 'final_answer' },
+        started_at_ms: ms,
+        completed_at_ms: ms,
+      });
+    }
+    line('event_msg', {
+      type: 'task_complete',
+      turn_id: turn,
+      root_turn_id: turn,
+      last_agent_message: reply?.text ?? null,
+      started_at: started,
+      completed_at: Math.floor(ms / 1000),
+      duration_ms: 0,
+    });
+  }
+  return out;
 }
 
 function contentText(content: unknown): string {

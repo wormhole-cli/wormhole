@@ -44,4 +44,6 @@ export interface ToolAdapter {
   extend(base: NativeRef, events: Event[], ctx: WriteContext): Promise<NativeRef>;
   /** argv that reopens the session interactively. */
   launchArgs(ref: NativeRef): string[];
+  /** Link that opens the session in the tool's desktop app, if it has one. */
+  appUrl?(ref: NativeRef): string;
 }

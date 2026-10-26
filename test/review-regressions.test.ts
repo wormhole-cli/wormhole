@@ -126,7 +126,8 @@ it('changes Codex metadata references without rewriting messages or tool output'
   const copy = await adapter.extend(ref, [{ kind: 'user_text', text: 'delta' }], { cwd });
   const records = (await readFile(copy.path, 'utf8')).trim().split('\n').map(l => JSON.parse(l));
   expect(records[0].payload.id).toBe(copy.nativeId);
-  expect(records[2].payload.content[0].text).toBe(`literal ${ref.nativeId}`);
-  expect(records[3].payload.output).toBe(ref.nativeId);
-  expect(records[4].payload).toEqual({ session_id: copy.nativeId, thread_id: copy.nativeId });
+  const literal = records.find(r => r.payload?.content?.[0]?.text === `literal ${ref.nativeId}`);
+  expect(literal).toBeDefined();
+  expect(records.find(r => r.payload?.call_id === 'x')?.payload.output).toBe(ref.nativeId);
+  expect(records.find(r => r.type === 'turn_context' && !r.payload.turn_id)?.payload).toEqual({ session_id: copy.nativeId, thread_id: copy.nativeId });
 });

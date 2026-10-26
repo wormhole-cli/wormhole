@@ -25,6 +25,25 @@ paired by `call_id`. Readers must tolerate all of these; the writer emits only t
 Not yet checked: whether a never-resumed synthetic rollout appears in the interactive
 `codex resume` picker (resume by id works).
 
+### Codex Desktop (verified 2026-10-26, app-server 0.164)
+
+Codex Desktop does not show messages straight from the rollout: it shows the turns it indexes into
+`thread_history_1.sqlite` (`thread_turns`, `thread_items`). A rollout with only `response_item`
+messages resumes in the CLI but has **0 turns** there, so the app shows "Couldn't load messages" or
+a blank thread. wormhole therefore writes what the desktop app writes:
+
+- `ordinal` on every line, numbered from 0; `session_meta.history_mode: "paginated"`.
+- Per exchange: `event_msg task_started {turn_id}`, `turn_context {turn_id, cwd, model}`, the
+  `response_item` messages, an `event_msg item_completed` per message (`UserMessage` with
+  `content: [{type: "text"}]`, `AgentMessage` with `content: [{type: "Text"}]`), and
+  `event_msg task_complete`.
+- Copies of older CLI files are renumbered; their own `task_started` turns are indexed too.
+
+`codex://threads/<id>` opens a thread in the app and indexes the rollout if needed. A thread
+resumed by `codex resume` stays locked by the CLI's `codex app-server` daemon, and the app then
+says "This is open in another app": open handoffs with `--app` instead, or run
+`codex app-server daemon stop`. Turns run in the app trigger `notify` like CLI turns do.
+
 ## Claude Code
 
 Transcript: `~/.claude/projects/<abs cwd with every non-alphanumeric char → '-'>/<uuid>.jsonl`.
@@ -34,6 +53,10 @@ No index file; `claude -r <id>` looks in the current directory's encoded folder.
 loaded by `claude -p -r <id>`; a made-up id gives "No conversation found". Verified 2026-10-26:
 `claude -p -r` answers from both a session wormhole synthesized from Codex and a wormhole copy of
 a native Claude session extended with Codex turns.
+
+Claude Desktop: `claude://resume?session=<uuid>` imports a CLI session into the app
+(`importCliSession`, logged as "Imported CLI session … as Desktop session local_…"). Verified: the
+imported session resumes and answers from its history.
 
 Record fields used: `type`, `uuid`, `parentUuid`, `sessionId`, `cwd`, `gitBranch`, `version`,
 `timestamp`, `isSidechain: false`, `userType: "external"`, `message` (Anthropic API shape).

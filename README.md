@@ -27,7 +27,9 @@ file as `*.before-wormhole`. Hooks only update projects that already have a thre
 `~/.wormhole/hook.log` instead of disturbing the tool.
 
 `wh` is a short alias. `-C <dir>` runs against another project directory; `--no-launch` writes the
-session and prints the resume command instead of opening it.
+session and prints the resume command instead of opening it; `--app` opens it in the desktop app
+(Claude Desktop via `claude://resume?session=<id>`, Codex Desktop via `codex://threads/<id>`)
+instead of the terminal.
 
 ## How it works
 

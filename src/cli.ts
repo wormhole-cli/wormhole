@@ -1,7 +1,8 @@
 import { Command, InvalidArgumentError, Option } from 'commander';
 import { oneLine } from './adapters/render.js';
 import { adapter, type Context, defaultContext, makeBrief, type SwitchResult, switchTo, sync } from './core.js';
-import { launch, shellLine } from './launch.js';
+import type { NativeRef } from './adapters/types.js';
+import { launch, openUrl, shellLine } from './launch.js';
 import { importFromHook, logHookError, parseClaudeHook, parseCodexNotify, readStdin, runChained, THEN } from './hooks/handle.js';
 import {
   claudeSettingsPath,
@@ -34,10 +35,18 @@ function parseTool(value: string): Tool {
 const fromOption = () =>
   new Option('--from <tool>', 'tool that owns --session').argParser(parseTool);
 
-async function run(c: Context, argv: string[], noLaunch: boolean | undefined) {
+async function run(c: Context, ref: NativeRef, opts: { launch: boolean; app?: boolean }) {
+  const a = adapter(c, ref.tool);
+  if (opts.app) {
+    if (!a.appUrl) throw new Error(`${ref.tool} has no desktop app link; drop --app to open it in the terminal`);
+    const url = a.appUrl(ref);
+    console.log(`  open ${url}`);
+    if (opts.launch) process.exitCode = await openUrl(url);
+    return;
+  }
+  const argv = a.launchArgs(ref);
   console.log(`  ${shellLine(argv)}`);
-  if (noLaunch) return;
-  process.exitCode = await launch(argv, c.cwd);
+  if (opts.launch) process.exitCode = await launch(argv, c.cwd);
 }
 
 program
@@ -88,12 +97,13 @@ program
   .addOption(fromOption())
   .option('-s, --session <id>', 'hand off this session instead of the newest (needs --from)')
   .option('--no-launch', 'write the session and print the command, but do not open it')
-  .action(async (to: Tool, opts: { from?: Tool; session?: string; launch: boolean }) => {
+  .option('--app', 'open it in the desktop app (Claude Desktop, Codex Desktop) instead of the terminal')
+  .action(async (to: Tool, opts: { from?: Tool; session?: string; launch: boolean; app?: boolean }) => {
     if (opts.session && !opts.from) throw new InvalidArgumentError('--session needs --from');
     const c = ctx();
     const result = await switchTo(c, to, { tool: opts.from, session: opts.session });
     report(result, to);
-    await run(c, adapter(c, to).launchArgs(result.ref), !opts.launch);
+    await run(c, result.ref, opts);
   });
 
 program
@@ -101,16 +111,17 @@ program
   .description('Reopen the session in use; with a tool, switch to it first if needed')
   .argument('[tool]', TOOLS.join(' | '), parseTool)
   .option('--no-launch', 'print the command, but do not open it')
-  .action(async (tool: Tool | undefined, opts: { launch: boolean }) => {
+  .option('--app', 'open it in the desktop app instead of the terminal')
+  .action(async (tool: Tool | undefined, opts: { launch: boolean; app?: boolean }) => {
     const c = ctx();
     if (tool) {
       const result = await switchTo(c, tool);
       report(result, tool);
-      return run(c, adapter(c, tool).launchArgs(result.ref), !opts.launch);
+      return run(c, result.ref, opts);
     }
     const { active } = await sync(c);
     if (!active) throw new Error(`no Claude Code, Codex or opencode session found for ${c.cwd}`);
-    await run(c, adapter(c, active.tool).launchArgs(active), !opts.launch);
+    await run(c, active, opts);
   });
 
 program

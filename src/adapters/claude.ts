@@ -221,6 +221,11 @@ export class ClaudeAdapter implements ToolAdapter {
   launchArgs(ref: NativeRef): string[] {
     return ['claude', '--resume', ref.nativeId];
   }
+
+  /** Claude Desktop imports a CLI session by id from this link. */
+  appUrl(ref: NativeRef): string {
+    return `claude://resume?session=${ref.nativeId}`;
+  }
 }
 
 interface ClaudeBlock {

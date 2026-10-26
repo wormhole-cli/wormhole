@@ -17,3 +17,9 @@ export function launch(argv: string[], cwd: string): Promise<number> {
 export function shellLine(argv: string[]): string {
   return argv.map((a) => (/^[\w@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`)).join(' ');
 }
+
+/** Hand a link to the OS, which opens the app registered for its scheme. */
+export function openUrl(url: string): Promise<number> {
+  const opener = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer' : 'xdg-open';
+  return launch([opener, url], process.cwd());
+}
