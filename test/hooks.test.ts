@@ -15,6 +15,7 @@ import {
   hasCodexNotify,
   OPENCODE_MARKER,
   opencodePlugin,
+  opencodePluginFormat,
   parseTomlStrings,
   withClaudeHook,
   withCodexNotify,
@@ -194,6 +195,77 @@ describe('opencode plugin', () => {
     await expect(hooks.event({ event: null })).resolves.toBeUndefined();
     // The spawn error arrives later; an unhandled one would fail the run.
     await new Promise((r) => setTimeout(r, 100));
+  });
+});
+
+describe('opencode 2.x plugin', () => {
+  let root: string;
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'wormhole-plugin2-'));
+  });
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  /** Load the 2.x plugin, feed it events through a fake ctx.event.subscribe, collect the wormhole calls. */
+  async function run(events: unknown[], binary = process.execPath) {
+    const recorder = path.join(root, 'record.cjs');
+    await writeFile(
+      recorder,
+      `const fs = require('fs'); fs.writeFileSync(require('path').join(${JSON.stringify(root)}, 'call-' + Date.now() + '-' + process.pid), JSON.stringify(process.argv.slice(2)));`,
+    );
+    const file = path.join(root, 'wormhole.mjs');
+    await writeFile(file, opencodePlugin([binary, recorder], 2));
+    const mod = (await import(file)) as { default: { id: string; setup: (ctx: unknown) => () => void } };
+    expect(mod.default.id).toBe('wormhole');
+    let aborted = false;
+    const ctx = {
+      location: { directory: '/instance' },
+      event: {
+        async *subscribe({ signal }: { signal: AbortSignal }) {
+          signal.addEventListener('abort', () => (aborted = true));
+          for (const e of events) yield e;
+        },
+      },
+    };
+    const stop = mod.default.setup(ctx);
+    const out: string[][] = [];
+    for (let i = 0; i < 40; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+      const files = readdirSync(root).filter((f) => f.startsWith('call-'));
+      if (files.length >= 2 || (files.length > 0 && i > 10)) {
+        for (const f of files) out.push(JSON.parse(await readFile(path.join(root, f), 'utf8')) as string[]);
+        break;
+      }
+    }
+    stop();
+    expect(aborted).toBe(true);
+    return out;
+  }
+
+  it('is written for the API of the installed opencode', () => {
+    expect(opencodePluginFormat(opencodePlugin(self, 2))).toBe(2);
+    expect(opencodePluginFormat(opencodePlugin(self, 1))).toBe(1);
+    expect(opencodePlugin(self, 2).split('\n')[0]).toBe(OPENCODE_MARKER);
+  });
+
+  it('runs wormhole hook opencode when a turn finishes', async () => {
+    const calls = await run([
+      { type: 'session.step.ended', data: { sessionID: 'ses_a' } },
+      { type: 'session.execution.succeeded', data: { sessionID: 'ses_a' }, location: { directory: '/proj' } },
+      { type: 'session.execution.failed', data: { sessionID: 'ses_b' } },
+      { type: 'session.execution.succeeded', data: {} },
+      null,
+    ]);
+    const inputs = calls.map((argv) => (expect(argv.slice(0, 2)).toEqual(['hook', 'opencode']), parseOpencodeHook(argv[2])));
+    expect(inputs.sort((x, y) => x!.session.localeCompare(y!.session))).toEqual([
+      { tool: 'opencode', cwd: '/proj', session: 'ses_a' },
+      { tool: 'opencode', cwd: '/instance', session: 'ses_b' },
+    ]);
+  });
+
+  it('never throws into opencode', async () => {
+    expect(await run([{ type: 'session.execution.succeeded', data: { sessionID: 's' } }], path.join(root, 'no-such-node'))).toEqual([]);
   });
 });
 

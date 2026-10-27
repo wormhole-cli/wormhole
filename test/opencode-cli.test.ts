@@ -13,11 +13,16 @@ import { OpencodeAdapter } from '../src/adapters/opencode.js';
 const FAKE = `#!/usr/bin/env node
 const fs = require('fs'), path = require('path');
 const dir = process.env.FAKE_OPENCODE_DIR;
-const [cmd, ...args] = process.argv.slice(2);
+let [cmd, ...args] = process.argv.slice(2);
+const v2 = !!process.env.FAKE_OPENCODE_V2;
+if (cmd === '--version') { process.stdout.write(v2 ? 'opencode v2.1.4\\n' : '1.19.0\\n'); process.exit(0); }
+// 2.x moved export/import under "session" and prints help for the old spelling.
+if (v2 && (cmd === 'export' || cmd === 'import')) { process.stdout.write('USAGE\\n  opencode <subcommand>'); process.exit(1); }
+if (v2 && cmd === 'session' && (args[0] === 'export' || args[0] === 'import')) [cmd, ...args] = args;
 const all = () => fs.readdirSync(dir).map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')));
 if (cmd === 'session' && args[0] === 'list') {
   if (process.env.FAKE_OPENCODE_FAIL_LIST) process.exit(2);
-  process.stdout.write(JSON.stringify(all().map((s) => ({ id: s.info.id, directory: s.info.directory, projectId: s.info.projectID, created: s.info.time.created, updated: s.info.time.updated }))));
+  process.stdout.write(JSON.stringify(all().map((s) => ({ id: s.info.id, directory: s.info.directory ?? s.info.location.directory, projectId: s.info.projectID, created: s.info.time.created, updated: s.info.time.updated }))));
 } else if (cmd === 'export') {
   const file = path.join(dir, args[0] + '.json');
   if (!fs.existsSync(file)) { process.stderr.write('Session not found'); process.exit(1); }
@@ -145,5 +150,19 @@ describe('model and project for written sessions', () => {
     const ref = await new OpencodeAdapter({ model: 'p/m' }).write([{ kind: 'user_text', text: 'a' }], { cwd });
     const saved = JSON.parse(await readFile(path.join(store, `${ref.nativeId}.json`), 'utf8'));
     expect(saved.info.projectID).toBe(rootCommit);
+  });
+});
+
+describe('opencode 2.x through its CLI', () => {
+  it('uses session export / import and the 2.x format', async () => {
+    process.env.FAKE_OPENCODE_V2 = '1';
+    const oc = new OpencodeAdapter({ model: 'acme/model-1' });
+    const ref = await oc.write([{ kind: 'user_text', text: 'hello v2' }, { kind: 'assistant_text', text: 'hi' }], { cwd });
+    const saved = JSON.parse(await readFile(path.join(store, `${ref.nativeId}.json`), 'utf8'));
+    expect(saved.info.location.directory).toBe(path.resolve(cwd));
+    expect(saved.messages.map((m: { type: string }) => m.type)).toEqual(['user', 'assistant']);
+    expect((await oc.detectLatest(cwd))?.nativeId).toBe(ref.nativeId);
+    const { events } = await oc.read((await oc.locate(cwd, ref.nativeId))!);
+    expect(events).toMatchObject([{ kind: 'user_text', text: 'hello v2' }, { kind: 'assistant_text', text: 'hi' }]);
   });
 });

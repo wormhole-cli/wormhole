@@ -1,6 +1,7 @@
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { opencodeFormat as installedOpencodeFormat } from '../adapters/opencode.js';
 import { findOnPath } from '../proc.js';
 import { atomicWrite } from '../store/store.js';
 import { THEN } from './handle.js';
@@ -37,11 +38,15 @@ export async function opencodeOnPath(): Promise<boolean> {
 export const OPENCODE_MARKER = '// wormhole opencode plugin: written by `wormhole hooks install`, removed by `wormhole hooks uninstall`.';
 
 /**
- * Plugin that runs `wormhole hook opencode <payload>` after each finished turn
- * (`session.idle`). It spawns detached and swallows every error, so opencode is never
- * held up; subagent sessions (those with a parentID) are skipped.
+ * Plugin that runs `wormhole hook opencode <payload>` after each finished turn. It spawns
+ * detached and swallows every error, so opencode is never held up. opencode 1.x and 2.x load
+ * different module shapes, so the file is written for the installed major version:
+ * 1.x calls an exported function's `event` hook (`session.idle`, subagent sessions skipped);
+ * 2.x loads a default `{ id, setup }` definition that subscribes to `session.execution.*`
+ * (subagent sessions are skipped later, when wormhole looks the session up).
  */
-export function opencodePlugin(self: string[]): string {
+export function opencodePlugin(self: string[], format: 1 | 2 = 1): string {
+  if (format === 2) return opencodePluginV2(self);
   return `${OPENCODE_MARKER}
 import { spawn } from "node:child_process";
 
@@ -70,6 +75,44 @@ export const WormholePlugin = async ({ directory }) => {
   };
 };
 `;
+}
+
+function opencodePluginV2(self: string[]): string {
+  return `${OPENCODE_MARKER}
+// opencode 2.x plugin API.
+import { spawn } from "node:child_process";
+
+const WORMHOLE = ${JSON.stringify(self)};
+
+export default {
+  id: "wormhole",
+  setup(ctx) {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        for await (const event of ctx.event.subscribe({ signal: controller.signal })) {
+          try {
+            if (event.type !== "session.execution.succeeded" && event.type !== "session.execution.failed") continue;
+            const sessionID = event.data?.sessionID;
+            if (!sessionID) continue;
+            const cwd = event.location?.directory || ctx.location?.directory;
+            const payload = JSON.stringify({ type: "session.idle", sessionID, cwd });
+            const child = spawn(WORMHOLE[0], [...WORMHOLE.slice(1), "hook", "opencode", payload], { detached: true, stdio: "ignore" });
+            child.on("error", () => {});
+            child.unref();
+          } catch {}
+        }
+      } catch {}
+    })();
+    return () => controller.abort();
+  },
+};
+`;
+}
+
+/** Which opencode plugin API a wormhole plugin file was written for. */
+export function opencodePluginFormat(text: string): 1 | 2 {
+  return /^export default \{/m.test(text) ? 2 : 1;
 }
 
 const isOurPlugin = (text: string) => text.startsWith(OPENCODE_MARKER);
@@ -276,7 +319,13 @@ const dirsFor = (tool: AccountDir['tool'], accounts: AccountDir[]) => [
   ...accounts.filter((a) => a.tool === tool).map((a) => a.dir),
 ];
 
-export async function install(targets: Target[], self = selfArgv(), accounts: AccountDir[] = []): Promise<string[]> {
+export async function install(
+  targets: Target[],
+  self = selfArgv(),
+  accounts: AccountDir[] = [],
+  /** Plugin API to write for; default: from the installed `opencode --version`. */
+  opencodeFormat?: 1 | 2,
+): Promise<string[]> {
   const done: string[] = [];
   for (const dir of targets.includes('claude') ? dirsFor('claude', accounts) : []) {
     const file = claudeSettingsPath(dir);
@@ -298,8 +347,9 @@ export async function install(targets: Target[], self = selfArgv(), accounts: Ac
     const file = opencodePluginPath();
     const existing = await readOr(file, '');
     if (existing && !isOurPlugin(existing)) throw new Error(`${file} exists and was not written by wormhole; leaving it alone`);
-    await atomicWrite(file, opencodePlugin(self));
-    done.push(`opencode: plugin ${file}`);
+    const format = opencodeFormat ?? (await installedOpencodeFormat());
+    await atomicWrite(file, opencodePlugin(self, format));
+    done.push(`opencode: plugin ${file}${format === 2 ? ' (opencode 2 API)' : ''}`);
   }
   return done;
 }

@@ -294,6 +294,16 @@ describe('hooks', () => {
     expect(byName(await runDoctor(probes()), 'opencode hook').level).toBe('fail');
   });
 
+  it('fails when the plugin was written for the other opencode major version', async () => {
+    results['opencode --version'] = ok('opencode v2.1.4\n');
+    expect(byName(await runDoctor(probes()), 'opencode hook')).toMatchObject({
+      level: 'fail',
+      detail: expect.stringContaining('opencode 1.x plugin API, but opencode 2.1.4'),
+    });
+    await put(path.join(home(), '.config', 'opencode', 'plugins', 'wormhole.js'), opencodePlugin(self, 2));
+    expect(byName(await runDoctor(probes()), 'opencode hook').level).toBe('pass');
+  });
+
   it('finds the opencode plugin under XDG_CONFIG_HOME', async () => {
     const xdg = path.join(root, 'xdg');
     await put(path.join(xdg, 'opencode', 'plugins', 'wormhole.js'), opencodePlugin(self));

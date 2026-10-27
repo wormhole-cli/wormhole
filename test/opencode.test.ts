@@ -201,3 +201,114 @@ describe('switching with opencode', () => {
     expect(text).toContain('Shipped v2.');
   });
 });
+
+/** opencode 2.x: imports and exports the flat message format. */
+class FakeCliV2 extends FakeCli {
+  override async list(_cwd: string) {
+    return [...this.sessions.values()].map((s) => ({
+      id: s.info.id,
+      directory: (s.info.location as { directory: string }).directory,
+      projectId: s.info.projectID,
+      created: s.info.time!.created,
+      updated: s.info.time!.updated,
+    }));
+  }
+  async format() {
+    return 2 as const;
+  }
+}
+
+describe('OpencodeAdapter with opencode 2.x', () => {
+  const model = { id: 'model-1', providerID: 'acme', variant: 'default' };
+  const v2Session = (id: string, messages: unknown[]) =>
+    ({
+      info: { id, projectID: 'p1', title: 't', agent: 'build', model, time: { created: 1, updated: 2 }, location: { directory: cwd } },
+      messages,
+    }) as unknown as OcSession;
+
+  it('reads user text, assistant text, tool calls with results, and stops before an unfinished reply', async () => {
+    const v2 = new FakeCliV2();
+    const a = new OpencodeAdapter({ cli: v2, model: 'acme/model-1' });
+    await v2.import(cwd, v2Session('ses_2', [
+      { id: 'm1', type: 'user', text: 'read the note', time: { created: 10 } },
+      { id: 'm1s', type: 'user', text: 'injected', synthetic: true, time: { created: 10 } },
+      {
+        id: 'm2', type: 'assistant', model, time: { created: 11, completed: 12 },
+        content: [
+          { type: 'reasoning', text: 'thinking' },
+          { type: 'tool', id: 'call_1', name: 'read', state: { status: 'completed', input: { path: 'note.txt' }, content: [{ type: 'text', text: 'hello' }] } },
+          { type: 'tool', id: 'call_2', name: 'write', state: { status: 'error', input: { path: 'out.txt', content: 'x' }, error: 'denied' } },
+          { type: 'text', text: 'done' },
+        ],
+      },
+      { id: 'm3', type: 'idle', outcome: 'succeeded', time: { created: 13 } },
+      { id: 'm4', type: 'user', text: 'next', time: { created: 14 } },
+      { id: 'm5', type: 'assistant', model, time: { created: 15 }, content: [{ type: 'text', text: 'partial' }] },
+    ]));
+    const ref = (await a.locate(cwd, 'ses_2'))!;
+    const { events, offset } = await a.read(ref);
+    expect(offset).toBe(5);
+    expect(events.map((e) => e.kind)).toEqual([
+      'user_text', 'tool_call', 'tool_result', 'tool_call', 'file_change', 'tool_result', 'assistant_text', 'user_text',
+    ]);
+    expect(events[1]).toMatchObject({ name: 'read', inputSummary: 'note.txt' });
+    expect(events[2]).toMatchObject({ summary: 'hello', isError: false });
+    expect(events[4]).toMatchObject({ path: 'out.txt', op: 'create' });
+    expect(events[5]).toMatchObject({ summary: 'denied', isError: true });
+    expect((await a.read(ref, offset)).events).toEqual([]);
+  });
+
+  it('writes and extends sessions in the 2.x format', async () => {
+    const v2 = new FakeCliV2();
+    const a = new OpencodeAdapter({ cli: v2, model: 'acme/model-1' });
+    const ref = await a.write([
+      { kind: 'user_text', text: 'plan it' },
+      { kind: 'assistant_text', text: 'Planned.' },
+    ], { cwd, brief: 'BRIEF' });
+    const saved = v2.sessions.get(ref.nativeId)! as unknown as { info: Record<string, unknown>; messages: Record<string, unknown>[] };
+    expect(saved.info).toMatchObject({ agent: 'build', model: { id: 'model-1', providerID: 'acme' }, location: { directory: cwd } });
+    expect(saved.info.projectID).toBeTruthy();
+    expect(saved.messages.map((m) => m.type)).toEqual(['user', 'assistant', 'user', 'assistant']);
+    expect(saved.messages[1]).toMatchObject({ agent: 'build', model: { id: 'model-1' }, content: [{ type: 'text', text: 'Planned.' }] });
+    expect(ref.offset).toBe(4);
+
+    // Work continues in opencode, with a tool call left open.
+    saved.messages.push(
+      { id: 'msg_x1', type: 'user', text: 'run tests', time: { created: 20 } },
+      { id: 'msg_x2', type: 'assistant', model: { id: 'other', providerID: 'prov' }, time: { created: 21, completed: 22 }, content: [{ type: 'tool', id: 'call_9', name: 'bash', state: { status: 'running', input: { command: 'npm test' } } }] },
+    );
+    const copy = await a.extend(ref, [{ kind: 'user_text', text: 'from codex' }], { cwd, brief: 'BACK' });
+    const c = v2.sessions.get(copy.nativeId)! as unknown as { info: Record<string, unknown>; messages: { id: string; type: string; content?: { state?: { status: string } }[]; model?: { id: string } }[] };
+    expect(copy.nativeId).not.toBe(ref.nativeId);
+    expect(String(c.info.title)).toContain('(wormhole)');
+    expect(new Set(c.messages.map((m) => m.id)).size).toBe(c.messages.length);
+    expect(c.messages.some((m) => saved.messages.some((o) => o.id === m.id))).toBe(false);
+    expect(c.messages[5]!.content![0]!.state!.status).toBe('error');
+    expect(c.messages.at(-1)!.model!.id).toBe('other');
+    expect(c.messages.map((m) => m.type).slice(-2)).toEqual(['user', 'assistant']);
+  });
+
+  it('uses the last model of a 2.x session in the project when none is configured', async () => {
+    const v2 = new FakeCliV2();
+    await v2.import(cwd, v2Session('ses_m', [
+      { id: 'm1', type: 'user', text: 'hi', time: { created: 1 } },
+      { id: 'm2', type: 'assistant', model, time: { created: 2, completed: 3 }, content: [{ type: 'text', text: 'yo' }] },
+    ]));
+    const env = process.env.WORMHOLE_OPENCODE_MODEL;
+    delete process.env.WORMHOLE_OPENCODE_MODEL;
+    try {
+      const ref = await new OpencodeAdapter({ cli: v2 }).write([{ kind: 'user_text', text: 'a' }], { cwd });
+      expect((v2.sessions.get(ref.nativeId)!.info as Record<string, unknown>).model).toMatchObject({ id: 'model-1', providerID: 'acme' });
+    } finally {
+      if (env !== undefined) process.env.WORMHOLE_OPENCODE_MODEL = env;
+    }
+  });
+
+  it('does not follow subagent sessions', async () => {
+    const v2 = new FakeCliV2();
+    const child = v2Session('ses_child', []) as unknown as { info: Record<string, unknown> };
+    child.info.parentID = 'ses_main';
+    await v2.import(cwd, child as unknown as OcSession);
+    expect(await new OpencodeAdapter({ cli: v2 }).locate(cwd, 'ses_child')).toBeNull();
+  });
+});

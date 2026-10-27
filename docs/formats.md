@@ -105,6 +105,36 @@ every part.
 - **Gotcha:** opencode exits before draining a stdout pipe, so `export` / `session list` output over
   8 KB arrives truncated. wormhole points stdout at a file instead.
 
+### opencode 2.x (2.1.4, verified 2026-10-27)
+
+wormhole checks `opencode --version` once (output `opencode v2.1.4`) and uses the 2.x commands and
+format from major version 2.
+
+- Commands: `export` / `import` moved to `opencode session export <id>` / `opencode session import
+  <file>` (the old spelling prints the help). `session list --format json`, `opencode --session <id>`,
+  `run --session <id> --fork --format json` (still `{type: "text", sessionID, part: {text}}` lines) and
+  `session delete` are unchanged. A background service (`opencode service`) now runs sessions;
+  `--standalone` runs a private one.
+- Export: `{info, messages}` with flat messages. `info`: `id, projectID, title, agent,
+  model{id, providerID, variant}, cost, tokens, time{created, updated}, location{directory}`.
+  Messages: `{type: "user", text, time}`; `{type: "assistant", agent, model, content: [blocks],
+  finish, cost, tokens, time{created, completed}}`; bookkeeping types such as `idle {outcome}` and
+  `agent-switched`. Blocks: `text`, `reasoning` (dropped), `tool {id, name, state{status, input,
+  content: [{type: "text", text}], error}}`. File tools take `input.path` (1.x: `filePath`).
+- Import rejects the 1.x shape (`Bad Request`). It needs `info.agent`, `info.model`, `info.cost`,
+  `info.tokens`, a `projectID` (any value: the session is filed under `location.directory`) and
+  `agent` + `model` on assistant messages. Same ids upsert ("Session already exists"), so copies
+  get fresh session and message ids.
+- Plugins: the 1.x module shape fails to load ("Plugin must export a default definition with an id
+  and an effect or setup function"). A 2.x plugin default-exports `{ id, setup(ctx) }`; a plain
+  object works, no package import needed. `setup` subscribes with `ctx.event.subscribe({signal})`
+  and returns a cleanup. A turn ends with `session.execution.succeeded` (or `.failed`), `data:
+  {sessionID}`; `ctx.location.directory` is the project. `hooks install` writes the plugin for the
+  installed major version, and `doctor` fails when the file does not match it.
+- Seen while testing: `opencode run` sometimes returned at once without running the turn, or hung,
+  through the background service and with `--standalone`, with and without wormhole's plugin;
+  `opencode service restart` cleared it.
+
 ## Headless summary runs (`--summarize`, verified 2026-10-26)
 
 - **Claude Code 2.1.310:** `claude -p <prompt> --resume <id> --fork-session --no-session-persistence

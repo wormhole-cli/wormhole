@@ -2,7 +2,7 @@ import { constants as fsConstants, promises as fs } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { type Account, ACCOUNT_ENV, type AccountTool, loadAccounts } from './accounts.js';
-import { chainedFrom, findNotify, OPENCODE_MARKER } from './hooks/install.js';
+import { chainedFrom, findNotify, OPENCODE_MARKER, opencodePluginFormat } from './hooks/install.js';
 import { Thread } from './model/thread.js';
 import { capture, findOnPath } from './proc.js';
 
@@ -94,6 +94,7 @@ export async function runDoctor(p: Probes = realProbes()): Promise<Check[]> {
 
   // ---- tools ----
   const bins: Record<string, string | null> = {};
+  const versions: Record<string, string> = {};
   for (const tool of ['claude', 'codex', 'opencode'] as const) {
     const bin = await p.which(tool);
     bins[tool] = bin;
@@ -104,6 +105,7 @@ export async function runDoctor(p: Probes = realProbes()): Promise<Check[]> {
     }
     const version = await p.exec(bin, ['--version']);
     const match = version?.stdout.match(/\d+\.\d+\.\d+[\w.-]*/);
+    if (match) versions[tool] = match[0];
     if (match) add(`${tool} on PATH`, 'pass', `${match[0]} (${bin})`);
     else add(`${tool} on PATH`, 'warn', `${bin} did not report a version`, `run \`${tool} --version\` to see why`);
   }
@@ -232,7 +234,12 @@ export async function runDoctor(p: Probes = realProbes()): Promise<Check[]> {
   } else {
     let argv: string[] = [];
     try { argv = JSON.parse(pluginText.match(/const WORMHOLE = (\[.*\]);/)?.[1] ?? '[]') as string[]; } catch { argv = []; }
-    if (await checkArgv('opencode hook', [...argv, 'hook'], plugin)) add('opencode hook', 'pass', `plugin ${plugin}`);
+    const major = versions.opencode ? Number.parseInt(versions.opencode, 10) : undefined;
+    const wanted = major === undefined ? undefined : major >= 2 ? 2 : 1;
+    const written = opencodePluginFormat(pluginText);
+    if (wanted !== undefined && written !== wanted) {
+      add('opencode hook', 'fail', `${plugin} is written for the opencode ${written}.x plugin API, but opencode ${versions.opencode} is installed and will not load it`, `${hookFix} --opencode`);
+    } else if (await checkArgv('opencode hook', [...argv, 'hook'], plugin)) add('opencode hook', 'pass', `plugin ${plugin}`);
   }
 
   // ---- store ----

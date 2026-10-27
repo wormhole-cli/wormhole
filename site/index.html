@@ -298,14 +298,14 @@ last   <span class="k">claude</span> b6f29c20-a95b…
 <section class="alt">
   <div class="wrap">
     <h2>Supported tools</h2>
-    <p class="sub">Checked against Claude Code 2.1, Codex CLI 0.164 and opencode 1.19. Formats change; <code>wormhole doctor</code> and the docs track it.</p>
+    <p class="sub">Checked against Claude Code 2.1, Codex CLI 0.164 and opencode 1.19 and 2.1. Formats change; <code>wormhole doctor</code> and the docs track it.</p>
     <div class="tablewrap">
       <table>
         <thead><tr><th>Tool</th><th>Reads</th><th>Writes and opens</th><th>Auto-import</th></tr></thead>
         <tbody>
           <tr><td>Claude Code</td><td>Transcripts in <code>~/.claude/projects</code></td><td><code>claude --resume</code>, Claude Desktop</td><td>SessionEnd hook</td></tr>
           <tr><td>Codex</td><td>Rollouts in <code>~/.codex/sessions</code></td><td><code>codex resume</code>, Codex Desktop</td><td>notify (chains yours)</td></tr>
-          <tr><td>opencode</td><td><code>opencode export</code></td><td><code>opencode import</code>, <code>opencode --session</code></td><td>Plugin on turn end</td></tr>
+          <tr><td>opencode</td><td><code>opencode session export</code> (1.x: <code>export</code>)</td><td><code>opencode session import</code>, <code>opencode --session</code></td><td>Plugin on turn end</td></tr>
         </tbody>
       </table>
     </div>

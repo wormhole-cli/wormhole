@@ -118,12 +118,15 @@ describe('opencode plugin on disk', () => {
     await mkdir(path.dirname(other), { recursive: true });
     await writeFile(other, 'export const Mine = async () => ({});\n');
 
-    expect(await install(['opencode'], self)).toEqual([`opencode: plugin ${opencodePluginPath()}`]);
+    expect(await install(['opencode'], self, [], 1)).toEqual([`opencode: plugin ${opencodePluginPath()}`]);
+    expect(await install(['opencode'], self, [], 2)).toEqual([`opencode: plugin ${opencodePluginPath()} (opencode 2 API)`]);
+    expect(await readFile(opencodePluginPath(), 'utf8')).toMatch(/^export default \{/m);
+    await install(['opencode'], self, [], 1);
     const text = await readFile(opencodePluginPath(), 'utf8');
     expect(text.startsWith(OPENCODE_MARKER)).toBe(true);
     expect(text).toContain(JSON.stringify(self));
     expect(await status()).toEqual({ claude: false, codex: false, opencode: true });
-    await install(['opencode'], self);
+    await install(['opencode'], self, [], 1);
     expect(await readFile(opencodePluginPath(), 'utf8')).toBe(text);
 
     expect(await uninstall(['opencode'])).toEqual([`opencode: removed plugin ${opencodePluginPath()}`]);

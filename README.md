@@ -61,7 +61,9 @@ The Claude hook goes into `settings.json` (`hooks.SessionEnd`), next to any hook
 allows one top-level `notify` program, so wormhole wraps an existing one (`… hook codex --then <old
 argv>`) and still runs it, with the same payload, on every turn. opencode gets a global plugin,
 `$XDG_CONFIG_HOME/opencode/plugins/wormhole.js` (default `~/.config/opencode`), that starts `wormhole hook
-opencode` in the background whenever a turn finishes (`session.idle`), skipping subagent sessions; uninstall
+opencode` in the background whenever a turn finishes, skipping subagent sessions. opencode 1.x and 2.x load
+different plugin shapes, so install writes the one for the installed version; after upgrading opencode,
+run `wormhole hooks install --opencode` again (`wormhole doctor` points it out). Uninstall
 deletes only that file, and install refuses to overwrite a `wormhole.js` it did not write. Plain `hooks
 install` includes opencode only when `opencode` is on PATH (`--opencode` installs it regardless; `--claude`,
 `--codex`, `--opencode` pick tools). The first install keeps a copy of each
@@ -164,8 +166,9 @@ with `[full: artifacts/…]`, and a handed-off session points the model at the f
    touched, git state). A tool call the copied session left open is closed with an error result first;
 3. opens it with `claude --resume <id>`, `codex resume <id>` or `opencode --session <id>`.
 
-opencode sessions are read with `opencode export` and written with `opencode import`; wormhole never
-touches its database. Written opencode messages use `WORMHOLE_OPENCODE_MODEL` (`provider/model`) if
+opencode sessions are read with `opencode export` and written with `opencode import` (`opencode
+session export` / `session import` on opencode 2, in its format; wormhole picks by `opencode
+--version`); wormhole never touches its database. Written opencode messages use `WORMHOLE_OPENCODE_MODEL` (`provider/model`) if
 set, else the model last used in that project, else `model` from opencode's config.
 
 Reasoning is never copied (Claude thinking signatures and Codex encrypted reasoning only verify with
@@ -174,7 +177,7 @@ their own provider), and wormhole never edits or deletes an existing native sess
 
 ## Status
 
-As of 2026-10-26 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, opencode 1.19).
+As of 2026-10-27 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, opencode 1.19 and 2.1).
 
 **Verified with the real tools**
 
@@ -191,6 +194,9 @@ As of 2026-10-26 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
 - opencode auto-import: a real `opencode run` updated the thread through the plugin, with no
   wormhole command run.
 - `--summarize` from opencode: the summary landed in the brief and the fork was deleted.
+- opencode 2.1.4 (new session format, `session export` / `import`, new plugin API): Claude Code →
+  opencode → Claude Code, the 2.x plugin importing turns through both the background
+  service and `--standalone`, and `--summarize` from opencode.
 - Accounts: Claude Code → `codex@alt` (a second `CODEX_HOME`) → Claude Code; Codex resumed it from
   the other folder and its turn came back.
 - Limit detection, against real session files: Claude Code 2.1.296–2.1.299 writes the

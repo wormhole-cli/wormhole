@@ -6,17 +6,21 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import type { Event } from '../model/thread.js';
 import { capture, spawnProgram } from '../proc.js';
+import { cliVersion } from './jsonl.js';
 import { CONTINUED, toTurns, type Turn } from './render.js';
 import type { NativeRef, ReadResult, ToolAdapter, WriteContext } from './types.js';
 
 /**
  * opencode keeps sessions in SQLite. wormhole never touches the database: it reads
- * through `opencode export` and writes through `opencode import`, which upserts by id.
+ * through `opencode export` and writes through `opencode import`, which upserts by id
+ * (`opencode session export` / `session import` from 2.0).
  */
 export interface OpencodeCli {
   list(cwd: string): Promise<OcListed[]>;
   export(cwd: string, id: string): Promise<OcSession | null>;
   import(cwd: string, session: OcSession): Promise<void>;
+  /** Session format the installed opencode imports: 1 (1.x) or 2 (2.x). Default 1. */
+  format?(): Promise<1 | 2>;
 }
 
 export interface OcListed {
@@ -27,9 +31,61 @@ export interface OcListed {
   updated: number;
 }
 
-export interface OcSession {
+/** An export in either format: 1.x messages are `{info, parts}`, 2.x messages are flat `{type, …}`. */
+export type OcSession = OcSessionV1 | OcSessionV2;
+
+export interface OcSessionV1 {
   info: { id: string; directory?: string; projectID?: string; version?: string; time?: { created: number; updated: number } } & Record<string, unknown>;
   messages: OcMessage[];
+}
+
+/** opencode 2.x export: the session's model and directory sit on `info`, message content is inline. */
+export interface OcSessionV2 {
+  info: {
+    id: string;
+    projectID: string;
+    title?: string;
+    location?: { directory: string };
+    time?: { created: number; updated: number };
+  } & Record<string, unknown>;
+  messages: OcMessageV2[];
+}
+
+interface ModelV2 {
+  id: string;
+  providerID: string;
+  variant?: string;
+}
+
+/** `user` and `assistant` carry the conversation; others (`idle`, …) are bookkeeping. */
+interface OcMessageV2 {
+  id: string;
+  type: string;
+  text?: string;
+  synthetic?: boolean;
+  time?: { created: number; completed?: number };
+  error?: unknown;
+  agent?: string;
+  model?: ModelV2;
+  content?: OcBlockV2[];
+}
+
+interface OcBlockV2 {
+  type: string;
+  text?: string;
+  id?: string;
+  name?: string;
+  state?: {
+    status?: string;
+    input?: Record<string, unknown>;
+    content?: { type: string; text?: string }[];
+    error?: unknown;
+    metadata?: { exit?: number };
+  };
+}
+
+export function isV2(s: OcSession): s is OcSessionV2 {
+  return s.messages.some((m) => !('info' in m)) || (s.messages.length === 0 && 'location' in s.info);
 }
 
 interface OcMessage {
@@ -97,7 +153,8 @@ export class OpencodeAdapter implements ToolAdapter {
 
   async locate(cwd: string, nativeId: string): Promise<NativeRef | null> {
     const session = await this.cli.export(path.resolve(cwd), nativeId);
-    if (!session) return null;
+    // Subagent sessions belong to their parent's conversation; wormhole follows top-level ones.
+    if (!session || session.info.parentID || session.info.parentId) return null;
     const t = session.info.time ?? { created: 0, updated: 0 };
     return listedRef({ id: nativeId, directory: cwd, created: t.created, updated: t.updated });
   }
@@ -106,6 +163,7 @@ export class OpencodeAdapter implements ToolAdapter {
   async read(ref: NativeRef, fromOffset = 0): Promise<ReadResult> {
     const session = await this.cli.export(path.dirname(ref.path) || '.', ref.nativeId);
     if (!session) return { events: [], offset: fromOffset };
+    if (isV2(session)) return readV2(session, fromOffset);
     const done = finishedPrefix(session.messages);
     const events: Event[] = [];
     for (const msg of session.messages.slice(fromOffset, done)) {
@@ -142,7 +200,25 @@ export class OpencodeAdapter implements ToolAdapter {
     const cwd = path.resolve(ctx.cwd);
     const ids = new IdGen();
     const model = await this.model(cwd);
-    const session: OcSession = {
+    if ((await this.format()) === 2) {
+      const v2: OcSessionV2 = {
+        info: {
+          id: ids.next('ses', true),
+          projectID: await this.projectId(cwd),
+          title: titleFrom(events),
+          agent: 'build',
+          model: modelV2(model),
+          cost: 0,
+          tokens: NO_TOKENS,
+          time: { created: ids.ms, updated: ids.ms },
+          location: { directory: cwd },
+        },
+        messages: [],
+      };
+      appendTurnsV2(v2, toTurns(events, ctx.brief), model, ids);
+      return this.save(cwd, v2);
+    }
+    const session: OcSessionV1 = {
       info: {
         id: ids.next('ses', true),
         slug: `wormhole-${randomBytes(3).toString('hex')}`,
@@ -163,6 +239,7 @@ export class OpencodeAdapter implements ToolAdapter {
     const original = await this.cli.export(cwd, base.nativeId);
     if (!original) throw new Error(`opencode session ${base.nativeId} not found`);
     const ids = new IdGen();
+    if (isV2(original)) return this.save(cwd, await this.extendV2(original, events, ctx, cwd, ids));
 
     // Import upserts by id, so the copy gets fresh ids for the session, every message and part.
     const map = new Map<string, string>([[original.info.id, ids.next('ses', true)]]);
@@ -170,7 +247,7 @@ export class OpencodeAdapter implements ToolAdapter {
       map.set(msg.info.id, ids.next('msg'));
       for (const part of msg.parts) map.set(part.id, ids.next('prt'));
     }
-    const session = remap(original, map) as OcSession;
+    const session = remap(original, map) as OcSessionV1;
     session.info.time = { created: session.info.time?.created ?? ids.ms, updated: ids.ms };
     session.info.title = `${String(session.info.title ?? 'session')} (wormhole)`;
 
@@ -199,8 +276,30 @@ export class OpencodeAdapter implements ToolAdapter {
     const t = session.info.time!;
     return {
       ...listedRef({ id: session.info.id, directory: cwd, created: t.created, updated: t.updated }),
-      offset: finishedPrefix(session.messages),
+      offset: isV2(session) ? finishedPrefixV2(session.messages) : finishedPrefix(session.messages),
     };
+  }
+
+  private async format(): Promise<1 | 2> {
+    return (await this.cli.format?.()) ?? 1;
+  }
+
+  /** The 2.x copy: fresh ids, unfinished messages dropped, open tool calls closed, then the new turns. */
+  private async extendV2(original: OcSessionV2, events: Event[], ctx: WriteContext, cwd: string, ids: IdGen): Promise<OcSessionV2> {
+    const map = new Map<string, string>([[original.info.id, ids.next('ses', true)]]);
+    for (const msg of original.messages) map.set(msg.id, ids.next('msg'));
+    const session = remap(original, map) as OcSessionV2;
+    session.info.title = `${String(session.info.title ?? 'session')} (wormhole)`;
+    session.messages = session.messages.slice(0, finishedPrefixV2(session.messages));
+    for (const block of session.messages.flatMap((m) => m.content ?? [])) {
+      if (block.type === 'tool' && block.state && block.state.status !== 'completed' && block.state.status !== 'error') {
+        block.state = { ...block.state, status: 'error', error: NOT_COMPLETED };
+      }
+    }
+    const last = session.messages.findLast((m) => m.type === 'assistant' && m.model);
+    const model = last?.model ? { providerID: last.model.providerID, modelID: last.model.id } : await this.model(cwd);
+    appendTurnsV2(session, toTurns(events, ctx.brief, CONTINUED), model, ids);
+    return session;
   }
 
   /** Model for written messages: option, else the last one used in this project, else opencode's default. */
@@ -210,8 +309,13 @@ export class OpencodeAdapter implements ToolAdapter {
     const recent = await this.detectLatest(cwd);
     if (recent) {
       const s = await this.cli.export(cwd, recent.nativeId);
-      const m = s?.messages.findLast((x) => x.info.role === 'assistant' && x.info.modelID && x.info.providerID);
-      if (m) return { providerID: m.info.providerID!, modelID: m.info.modelID! };
+      if (s && isV2(s)) {
+        const m = s.messages.findLast((x) => x.type === 'assistant' && x.model);
+        if (m?.model) return { providerID: m.model.providerID, modelID: m.model.id };
+      } else {
+        const m = s?.messages.findLast((x) => x.info.role === 'assistant' && x.info.modelID && x.info.providerID);
+        if (m) return { providerID: m.info.providerID!, modelID: m.info.modelID! };
+      }
     }
     const config = await readConfigModel();
     return config ? splitModel(config) : { providerID: 'opencode', modelID: 'default' };
@@ -239,7 +343,7 @@ function finishedPrefix(messages: OcMessage[]): number {
   return i === -1 ? messages.length : i;
 }
 
-function appendTurns(session: OcSession, turns: Turn[], model: Model, cwd: string, ids: IdGen) {
+function appendTurns(session: OcSessionV1, turns: Turn[], model: Model, cwd: string, ids: IdGen) {
   let parent = session.messages.findLast((m) => m.info.role === 'user')?.info.id;
   for (const turn of turns) {
     const id = ids.next('msg');
@@ -264,6 +368,81 @@ function appendTurns(session: OcSession, turns: Turn[], model: Model, cwd: strin
     if (turn.role === 'user') parent = id;
     const part = { id: ids.next('prt'), sessionID: session.info.id, messageID: id, type: 'text', text: turn.text };
     session.messages.push({ info, parts: [part] });
+  }
+  session.info.time = { created: session.info.time?.created ?? ids.ms, updated: ids.ms };
+}
+
+const NO_TOKENS = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } };
+
+function modelV2(m: Model): ModelV2 {
+  return { id: m.modelID, providerID: m.providerID, variant: 'default' };
+}
+
+/** Like finishedPrefix, for 2.x messages. */
+function finishedPrefixV2(messages: OcMessageV2[]): number {
+  const i = messages.findIndex((m) => m.type === 'assistant' && !m.time?.completed && !m.error);
+  return i === -1 ? messages.length : i;
+}
+
+/** 2.x export → events; the offset counts messages, bookkeeping ones included. */
+function readV2(session: OcSessionV2, fromOffset: number): ReadResult {
+  const done = finishedPrefixV2(session.messages);
+  const events: Event[] = [];
+  for (const msg of session.messages.slice(fromOffset, done)) {
+    const ts = msg.time?.created ? new Date(msg.time.created).toISOString() : undefined;
+    if (msg.type === 'user') {
+      if (msg.text && !msg.synthetic) events.push({ kind: 'user_text', text: msg.text, ts });
+      continue;
+    }
+    if (msg.type !== 'assistant') continue;
+    for (const block of msg.content ?? []) {
+      if (block.type === 'text' && block.text) {
+        events.push({ kind: 'assistant_text', text: block.text, ts });
+      } else if (block.type === 'tool' && block.id && block.name) {
+        const input = block.state?.input ?? {};
+        events.push({ kind: 'tool_call', callId: block.id, name: block.name, inputSummary: summarizeInput(input), ts });
+        const op = FILE_TOOLS[block.name];
+        const file = typeof input.path === 'string' ? input.path : typeof input.filePath === 'string' ? input.filePath : undefined;
+        if (op && file) events.push({ kind: 'file_change', path: file, op, ts });
+        const status = block.state?.status;
+        if (status === 'completed' || status === 'error') {
+          const out = (block.state?.content ?? []).map((c) => c.text ?? '').join('\n');
+          const error = block.state?.error;
+          const exit = block.state?.metadata?.exit;
+          events.push({
+            kind: 'tool_result',
+            callId: block.id,
+            summary: out || (typeof error === 'string' ? error : error ? JSON.stringify(error) : ''),
+            isError: status === 'error' || (typeof exit === 'number' && exit !== 0),
+            ts,
+          });
+        }
+      }
+      // reasoning and other blocks carry no conversation text.
+    }
+  }
+  return { events, offset: done };
+}
+
+function appendTurnsV2(session: OcSessionV2, turns: Turn[], model: Model, ids: IdGen) {
+  for (const turn of turns) {
+    const id = ids.next('msg');
+    const created = ids.ms;
+    session.messages.push(
+      turn.role === 'user'
+        ? { id, type: 'user', text: turn.text, time: { created } }
+        : {
+            id,
+            type: 'assistant',
+            agent: 'build',
+            model: modelV2(model),
+            content: [{ type: 'text', text: turn.text }],
+            finish: 'stop',
+            cost: 0,
+            tokens: NO_TOKENS,
+            time: { created, completed: created },
+          } as OcMessageV2,
+    );
   }
   session.info.time = { created: session.info.time?.created ?? ids.ms, updated: ids.ms };
 }
@@ -324,7 +503,7 @@ function titleFrom(events: Event[]): string {
 }
 
 function summarizeInput(input: Record<string, unknown>): string {
-  for (const key of ['command', 'filePath', 'pattern', 'url', 'query', 'prompt', 'description']) {
+  for (const key of ['command', 'filePath', 'path', 'pattern', 'url', 'query', 'prompt', 'description']) {
     if (typeof input[key] === 'string') return input[key];
   }
   return JSON.stringify(input);
@@ -361,7 +540,21 @@ async function stdoutViaFile(bin: string, args: string[], cwd: string): Promise<
   }
 }
 
+const installedFormat = new Map<string, Promise<1 | 2>>();
+
+/** 2 for opencode 2.x and later, from `opencode --version` (checked once per PATH). */
+export function opencodeFormat(): Promise<1 | 2> {
+  const key = process.env.PATH ?? '';
+  let format = installedFormat.get(key);
+  if (!format) {
+    format = cliVersion('opencode', '1.0.0').then((v) => (Number.parseInt(v, 10) >= 2 ? 2 : 1));
+    installedFormat.set(key, format);
+  }
+  return format;
+}
+
 const execCli: OpencodeCli = {
+  format: opencodeFormat,
   async list(cwd) {
     try {
       return JSON.parse(await stdoutViaFile('opencode', ['session', 'list', '--format', 'json'], cwd)) as OcListed[];
@@ -371,7 +564,8 @@ const execCli: OpencodeCli = {
   },
   async export(cwd, id) {
     try {
-      return JSON.parse(await stdoutViaFile('opencode', ['export', id], cwd)) as OcSession;
+      const args = (await opencodeFormat()) === 2 ? ['session', 'export', id] : ['export', id];
+      return JSON.parse(await stdoutViaFile('opencode', args, cwd)) as OcSession;
     } catch {
       return null;
     }
@@ -380,7 +574,8 @@ const execCli: OpencodeCli = {
     const file = path.join(tmpdir(), `wormhole-${session.info.id}.json`);
     await fs.writeFile(file, JSON.stringify(session), { mode: 0o600 });
     try {
-      const r = await capture('opencode', ['import', file], { cwd, timeoutMs: 60_000 });
+      const args = (await opencodeFormat()) === 2 ? ['session', 'import', file] : ['import', file];
+      const r = await capture('opencode', args, { cwd, timeoutMs: 60_000 });
       if (!r) throw new Error('opencode is not on PATH');
       if (r.code !== 0) throw new Error(`opencode import exited with ${r.code}: ${r.stderr.trim().split('\n').at(-1) ?? ''}`);
     } finally {
