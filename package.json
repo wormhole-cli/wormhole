@@ -16,13 +16,13 @@
     "anthropic",
     "openai"
   ],
-  "homepage": "https://ashutosh091.github.io/wormhole/",
+  "homepage": "https://wormhole-cli.github.io/",
   "bugs": {
-    "url": "https://github.com/ashutosh091/wormhole/issues"
+    "url": "https://github.com/wormhole-cli/wormhole/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ashutosh091/wormhole.git"
+    "url": "git+https://github.com/wormhole-cli/wormhole.git"
   },
   "license": "MIT",
   "author": "ashutosh091 (https://github.com/ashutosh091)",

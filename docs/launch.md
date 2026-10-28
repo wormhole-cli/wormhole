@@ -1,28 +1,31 @@
 # Launch checklist
 
-For the day the repo goes public. Nothing here has been done yet.
+The repo went public on 2026-10-28 under the `wormhole-cli` organization. Ticked items are done.
 
-## 1. Before flipping visibility
+## 1. Before going public
 
-- [ ] `wormhole doctor` clean on a fresh machine or user account; `npm pack --dry-run` lists only
-      `bin/`, `dist/`, `README.md`, `LICENSE`.
+- [x] `npm pack --dry-run` lists only `bin/`, `dist/`, `README.md`, `LICENSE`.
+- [x] History scanned for secrets (gitleaks, no findings).
+- [ ] `wormhole doctor` clean on a fresh machine or user account.
 - [ ] Record the demo GIF (below) and put it at the top of the README, under the pitch.
 - [ ] Publish `v0.1.0` (see [releasing.md](releasing.md)) so `npm i -g @wormhole-cli/wormhole` works when
       people arrive.
 
 ## 2. Repo settings
 
-```bash
-gh repo edit ashutosh091/wormhole --visibility public --accept-visibility-change-consequences
-gh repo edit ashutosh091/wormhole \
-  --description "Move a coding session between Claude Code, Codex and opencode, and resume it on the other side" \
-  --homepage "https://ashutosh091.github.io/wormhole/" \
-  --add-topic claude-code --add-topic codex --add-topic opencode --add-topic ai-agents \
-  --add-topic coding-agents --add-topic llm --add-topic cli --add-topic developer-tools \
-  --add-topic anthropic --add-topic openai
-```
-
-- [ ] Settings → Pages → Source: GitHub Actions; then run the `pages` workflow (or push to `site/`).
+- [x] Public, with description, homepage and topics:
+  ```bash
+  gh repo edit wormhole-cli/wormhole \
+    --description "Move a coding session between Claude Code, Codex and opencode, and resume it on the other side" \
+    --homepage "https://wormhole-cli.github.io/" \
+    --add-topic claude-code --add-topic codex --add-topic opencode --add-topic ai-agents \
+    --add-topic coding-agents --add-topic llm --add-topic cli --add-topic developer-tools \
+    --add-topic anthropic --add-topic openai
+  ```
+- [x] Site at https://wormhole-cli.github.io, published by the workflow in
+      [wormhole-cli/wormhole-cli.github.io](https://github.com/wormhole-cli/wormhole-cli.github.io) from this
+      repo's `site/`, every six hours. To publish a change right away:
+      `gh workflow run pages.yml -R wormhole-cli/wormhole-cli.github.io`.
 - [ ] Upload `site/og.png` as the social preview (Settings → General → Social preview).
 - [ ] Pin the repo on your GitHub profile.
 

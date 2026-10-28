@@ -40,5 +40,5 @@ First release.
 - Runs on macOS, Linux and Windows; CI tests all three.
 - opencode 1.x and 2.x: both session formats and commands, and a plugin for each plugin API.
 
-[Unreleased]: https://github.com/ashutosh091/wormhole/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/ashutosh091/wormhole/releases/tag/v0.1.0
+[Unreleased]: https://github.com/wormhole-cli/wormhole/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/wormhole-cli/wormhole/releases/tag/v0.1.0

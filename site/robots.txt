@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://ashutosh091.github.io/wormhole/sitemap.xml
+Sitemap: https://wormhole-cli.github.io/sitemap.xml

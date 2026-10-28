@@ -6,7 +6,7 @@ welcome.
 ## Setup
 
 ```bash
-git clone https://github.com/ashutosh091/wormhole.git
+git clone https://github.com/wormhole-cli/wormhole.git
 cd wormhole
 npm install
 npm run build

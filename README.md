@@ -1,6 +1,6 @@
 # wormhole
 
-[![CI](https://github.com/ashutosh091/wormhole/actions/workflows/ci.yml/badge.svg)](https://github.com/ashutosh091/wormhole/actions/workflows/ci.yml)
+[![CI](https://github.com/wormhole-cli/wormhole/actions/workflows/ci.yml/badge.svg)](https://github.com/wormhole-cli/wormhole/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@wormhole-cli/wormhole)](https://www.npmjs.com/package/@wormhole-cli/wormhole)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

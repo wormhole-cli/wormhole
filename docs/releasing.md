@@ -18,7 +18,7 @@ adds `--provenance` only once the repo is public.
    token has to allow creating new packages in that organization.
 2. Store it as a repository secret:
    ```bash
-   gh secret set NPM_TOKEN --repo ashutosh091/wormhole
+   gh secret set NPM_TOKEN --repo wormhole-cli/wormhole
    ```
    Paste the token when asked. Keep a copy wherever you back up secrets.
 
