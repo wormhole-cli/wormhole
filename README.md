@@ -1,7 +1,7 @@
 # wormhole
 
 [![CI](https://github.com/ashutosh091/wormhole/actions/workflows/ci.yml/badge.svg)](https://github.com/ashutosh091/wormhole/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/agent-wormhole)](https://www.npmjs.com/package/agent-wormhole)
+[![npm](https://img.shields.io/npm/v/@wormhole-cli/wormhole)](https://www.npmjs.com/package/@wormhole-cli/wormhole)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **Move a coding session between Claude Code, Codex and opencode, and resume it on the other side.**
@@ -21,7 +21,7 @@ back later and Claude Code picks up its own session, with only the new turns fro
 ## Install
 
 ```bash
-npm i -g agent-wormhole   # Node 22+, macOS / Linux / Windows; installs `wormhole` and `wh`
+npm i -g @wormhole-cli/wormhole   # Node 22+, macOS / Linux / Windows; installs `wormhole` and `wh`
 wormhole hooks install    # optional: keep threads up to date after every turn
 wormhole doctor           # check tools, logins and hooks
 ```

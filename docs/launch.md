@@ -7,7 +7,7 @@ For the day the repo goes public. Nothing here has been done yet.
 - [ ] `wormhole doctor` clean on a fresh machine or user account; `npm pack --dry-run` lists only
       `bin/`, `dist/`, `README.md`, `LICENSE`.
 - [ ] Record the demo GIF (below) and put it at the top of the README, under the pitch.
-- [ ] Publish `v0.1.0` (see [releasing.md](releasing.md)) so `npm i -g agent-wormhole` works when
+- [ ] Publish `v0.1.0` (see [releasing.md](releasing.md)) so `npm i -g @wormhole-cli/wormhole` works when
       people arrive.
 
 ## 2. Repo settings
@@ -75,4 +75,4 @@ Open a short PR (one line, link, description) to lists people browse:
 - [ ] Answer issues fast in the first week; label good first issues.
 - [ ] Note which tool versions people run (from `doctor --json` in bug reports) and keep
       `docs/formats.md` current.
-- [ ] Cut a release for each fix so `npm i -g agent-wormhole` stays the answer.
+- [ ] Cut a release for each fix so `npm i -g @wormhole-cli/wormhole` stays the answer.

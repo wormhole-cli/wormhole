@@ -1,5 +1,5 @@
 {
-  "name": "agent-wormhole",
+  "name": "@wormhole-cli/wormhole",
   "version": "0.1.0",
   "description": "Move a coding session between Claude Code, Codex and opencode, and resume it on the other side.",
   "keywords": [

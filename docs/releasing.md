@@ -3,7 +3,7 @@
 Releases are cut by pushing a `vX.Y.Z` tag. `.github/workflows/release.yml` then:
 1. runs the typecheck, tests and build;
 2. checks the tag matches `package.json`;
-3. publishes `agent-wormhole` to npm;
+3. publishes `@wormhole-cli/wormhole` to npm;
 4. creates the GitHub release, with that version's section of `CHANGELOG.md` as the notes.
 
 Publishing to npm makes the code public on npmjs.com even while the GitHub repo is private. npm
@@ -13,8 +13,9 @@ adds `--provenance` only once the repo is public.
 ## One-time setup
 
 1. Create an npm account (or log in) and a **granular access token** with read and write access
-   to packages. Limit it to `agent-wormhole` once the package exists; for the first publish it has
-   to allow creating new packages.
+   to packages and organizations, limited to the `wormhole-cli` organization (free for public
+   packages; create it first under your npm avatar → Add Organization). For the first publish the
+   token has to allow creating new packages in that organization.
 2. Store it as a repository secret:
    ```bash
    gh secret set NPM_TOKEN --repo ashutosh091/wormhole
@@ -55,5 +56,5 @@ It runs every step with `npm publish --dry-run` and skips the GitHub release.
 
 ```bash
 npm pack --dry-run            # only bin/, dist/, README.md, LICENSE
-npm pack && npm i -g ./agent-wormhole-*.tgz --prefix /tmp/wh-try && /tmp/wh-try/bin/wormhole --version
+npm pack && npm i -g ./wormhole-cli-wormhole-*.tgz --prefix /tmp/wh-try && /tmp/wh-try/bin/wormhole --version
 ```

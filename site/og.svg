@@ -24,5 +24,5 @@
   <rect x="80" y="460" width="560" height="74" rx="14" fill="#08070f" stroke="#3b2f7a" stroke-width="2"/>
   <text x="108" y="508" fill="#8a85a8" font-family="Menlo, monospace" font-size="30">$</text>
   <text x="138" y="508" fill="#e6e3f5" font-family="Menlo, monospace" font-size="30">wormhole switch codex</text>
-  <text x="1120" y="575" text-anchor="end" fill="#8a85a8" font-family="Menlo, monospace" font-size="24">npm i -g agent-wormhole</text>
+  <text x="1120" y="575" text-anchor="end" fill="#8a85a8" font-family="Menlo, monospace" font-size="24">npm i -g @wormhole-cli/wormhole</text>
 </svg>

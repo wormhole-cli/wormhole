@@ -1,6 +1,6 @@
 name: Release
 
-# Push a vX.Y.Z tag to publish agent-wormhole to npm and create the GitHub release.
+# Push a vX.Y.Z tag to publish @wormhole-cli/wormhole to npm and create the GitHub release.
 # Run it by hand with dry-run to check everything without publishing.
 on:
   push:
