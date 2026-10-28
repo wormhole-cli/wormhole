@@ -190,9 +190,8 @@ As of 2026-10-27 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
 
 - Claude Code → Codex → Claude Code, both as a new session and as an extended copy; the resumed
   model answers from the imported history (`claude -p -r`, `codex exec resume`).
-- opencode round trip through `opencode export` / `import`:
- : Claude Code → opencode, which recalled the
-  Claude turns, → Claude Code, which knew what was said in opencode.
+- opencode round trip through `opencode export` / `import`: Claude Code → opencode, which recalled
+  the Claude turns, → Claude Code, which knew what was said in opencode.
 - Desktop apps: Codex Desktop loads and resumes handed-off threads (`--app`, `codex://threads/<id>`),
   and its turns fire the notify hook; Claude Desktop imports a session from
   `claude://resume?session=<id>` and answers from it.
@@ -206,7 +205,7 @@ As of 2026-10-27 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
   service and `--standalone`, and `--summarize` from opencode.
 - Accounts: Claude Code → `codex@alt` (a second `CODEX_HOME`) → Claude Code; Codex resumed it from
   the other folder and its turn came back.
-- Limit detection, against real session files: Claude Code 2.1.296–2.1.299 writes the
+- Limit detection against real session files: Claude Code 2.1.296–2.1.299 writes the
   `usage_limit_reached` records described above (5-hour window, with `quotaLimits.resetsAt`) and
   `model_requires_usage_credits` for a model limit; sessions that hit a limit and later carried on
   count as not limited.
@@ -216,13 +215,11 @@ As of 2026-10-27 (Claude Code CLI and Desktop, Codex CLI 0.164 and Desktop, open
 - Windows: the full test suite passes on Windows in CI (Node starts npm's `.cmd` shims through
   cross-spawn, programs are found through `PATHEXT`, account launches print PowerShell), but no
   real Claude Code / Codex / opencode session has been moved on a Windows machine yet.
-
 - Moving between two Claude Code logins (`claude@work`). It needs a second logged-in folder; the open
   question is whether the other account accepts the copied session's thinking blocks.
-- A Codex session at its limit: none has been captured yet, so
-  the 100% / `rate_limit_reached_type` case and the `error` event fallback are built from the
-  snapshot shape, not a captured limit. `wormhole next` and the auto hook were run against copies in
-  temporary folders, not against a real exhausted account.
+- A Codex session at its limit: none has been captured yet, so the 100% / `rate_limit_reached_type`
+  case and the `error` event fallback are built from the snapshot shape. `wormhole next` and the auto hook were tested against copies in temporary folders,
+  not a real account at its limit.
 - Interactive `claude -r` picker listing (it stopped at the folder-trust prompt; `claude -c` uses the
   same lookup and finds the session).
 

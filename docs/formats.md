@@ -149,8 +149,7 @@ format from major version 2.
 - **opencode 1.19.0:** `opencode run --session <id> --fork --format json <prompt>` prints one JSON
   event per line, each with `type` and `sessionID` (the fork's); text arrives as
   `{"type":"text","part":{"text":…}}`. The fork is a real session, so wormhole deletes it with
-  `opencode session delete <fork id>`. Not run end to end here;
-  the event shape for text parts is from opencode's run output, not a live capture.
+  `opencode session delete <fork id>`. Verified end to end on 1.19 and 2.1.
 
 ## Usage limits (read by `src/limits.ts`, seen 2026-10-26)
 
