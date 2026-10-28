@@ -157,6 +157,7 @@ h2 { font-size: clamp(1.5rem, 3.2vw, 2.1rem); letter-spacing: -.02em; margin: 0 
 .card h3 { margin: 0 0 8px; font-size: 1.05rem; letter-spacing: -.01em; }
 .card p { margin: 0; color: var(--muted); font-size: .97rem; }
 .card .ico { font: 600 .8rem/1 var(--mono); color: var(--accent); margin-bottom: 12px; display: block; }
+.card .tag { font: 600 .7rem/1 var(--sans, system-ui); color: var(--muted, #8a85a8); border: 1px solid var(--line); border-radius: 999px; padding: 2px 7px; margin-left: 6px; vertical-align: 1px; text-transform: uppercase; letter-spacing: .04em; }
 
 .steps { counter-reset: s; display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 .step { position: relative; padding: 22px 22px 22px 22px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--card); }
@@ -272,7 +273,7 @@ last   <span class="k">claude</span> b6f29c20-a95b…
     <div class="grid">
       <div class="card"><span class="ico">switch · resume</span><h3>One command each way</h3><p><code>wormhole switch codex</code>, <code>wormhole switch claude</code>, <code>wormhole resume</code>. Round trips keep each tool's own history.</p></div>
       <div class="card"><span class="ico">hooks</span><h3>Always up to date</h3><p><code>wormhole hooks install</code> adds a Claude Code SessionEnd hook, a Codex notify wrapper and an opencode plugin, so every turn lands in the thread.</p></div>
-      <div class="card"><span class="ico">accounts · next</span><h3>Several logins, no dead ends</h3><p>Use <code>claude@work</code> or <code>codex@alt</code>. When a session hits its usage limit, <code>wormhole next</code> moves to the next account or tool with room.</p></div>
+      <div class="card"><span class="ico">accounts · next <span class="tag">experimental</span></span><h3>Several logins, no dead ends</h3><p>Use <code>claude@work</code> or <code>codex@alt</code>. When a session hits its usage limit, <code>wormhole next</code> moves to the next account or tool with room. A second Codex login is tested; two Claude logins and real limits are <a href="https://github.com/wormhole-cli/wormhole#status">not yet</a>.</p></div>
       <div class="card"><span class="ico">--lean</span><h3>Fewer tokens on long sessions</h3><p>Start the next agent from the brief alone; the full conversation waits in a file it can read when it needs it.</p></div>
       <div class="card"><span class="ico">--summarize</span><h3>A summary from the tool you leave</h3><p>Ask the outgoing agent for a 10-line summary for the brief, without adding a turn to your session.</p></div>
       <div class="card"><span class="ico">--app</span><h3>Desktop apps too</h3><p>Open handoffs in Codex Desktop or Claude Desktop through their own links, or stay in the terminal.</p></div>

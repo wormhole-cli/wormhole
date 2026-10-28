@@ -14,7 +14,8 @@ back later and Claude Code picks up its own session, with only the new turns fro
 - **Real native sessions**, not a pasted summary: `claude --resume`, `codex resume` and
   `opencode --session` open them like any other.
 - **Round trips keep native history**: switching back extends a copy of the tool's own session.
-- **Several logins**: `claude@work`, `codex@alt`; `wormhole next` moves on when one runs out.
+- **Several logins** *(experimental)*: `claude@work`, `codex@alt`; `wormhole next` moves on when one
+  runs out. See [Status](#status) for what has been tested.
 - **Local only**: reads and writes the tools' own files on your machine; never edits or deletes an
   existing session.
 
@@ -102,6 +103,10 @@ older than 30 s, and the last `hook.log` error if it is under 7 days old. A miss
 warning.
 
 ### Several accounts
+
+> **Experimental.** Moving to a second Codex login has been tested with the real tools. Moving
+> between two Claude Code logins, and `wormhole next` at a real usage limit, have only been tested
+> against copies so far; see [Status](#status). Reports welcome in the issues.
 
 Claude Code and Codex keep each login, with its sessions, in one folder (`CLAUDE_CONFIG_DIR`,
 `CODEX_HOME`). Register extra folders as named accounts and use them as `tool@name`:
