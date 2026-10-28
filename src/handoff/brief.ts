@@ -15,18 +15,27 @@ export interface BriefInput {
   continuing?: boolean;
   /** What the tool being left said about the session when asked (`--summarize`). */
   summary?: { tool: Tool; text: string };
+  /** The conversation was not copied (`--lean`): the full text is in this file. */
+  transcript?: string;
 }
 
 /**
  * Deterministic handoff note, appended as the last user turn of the synthesized
  * session so the target model reads it first on resume.
  */
-export function buildBrief({ events, from, to, git, continuing, summary }: BriefInput): string {
+export function buildBrief({ events, from, to, git, continuing, summary, transcript }: BriefInput): string {
   const users = events.filter((e) => e.kind === 'user_text');
   const lastReply = events.findLast((e) => e.kind === 'assistant_text');
   const sources = [...new Set(from)].map((t) => TOOL_NAMES[t]).join(' and ') || 'another tool';
 
-  const out: string[] = continuing
+  const out: string[] = transcript
+    ? [
+        `[wormhole handoff] You are ${TOOL_NAMES[to]}, continuing work that was started in ${sources}.`,
+        'The earlier conversation was not copied here; the notes below cover where it stands.',
+        `The full conversation is in ${transcript}. Read the parts you need, not the whole file.`,
+        'Re-read files before editing them.',
+      ]
+    : continuing
     ? [
         `[wormhole handoff] You are ${TOOL_NAMES[to]}, back in this session after work continued in ${sources}.`,
         'The turns after your last reply were imported from there.',
@@ -35,7 +44,7 @@ export function buildBrief({ events, from, to, git, continuing, summary }: Brief
         `[wormhole handoff] You are ${TOOL_NAMES[to]}, continuing work that was started in ${sources}.`,
         'The conversation above was imported.',
       ];
-  out.push(
+  if (!transcript) out.push(
     'Lines like "▸ Name: input → ok: result" record tool calls the other tool made; they are history,',
     'not tools you can call. Re-read files before editing them.',
   );

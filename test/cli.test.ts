@@ -216,6 +216,14 @@ describe('wormhole switch and resume', () => {
   });
 });
 
+describe('wormhole switch --lean', () => {
+  it('writes a brief-only session and says where the conversation is', async () => {
+    await claudeSession('c1', [['build the parser', 'Parser done.']]);
+    expect(await run('switch', 'codex', '--lean', '--no-launch')).toBe(0);
+    expect(text()).toMatch(/new session holding only the brief; the conversation is in .*transcript\.md/);
+  });
+});
+
 describe('wormhole switch --summarize', () => {
   let calls: string[][];
   const summarizing = (runner: Deps['run']) => (...args: string[]) =>

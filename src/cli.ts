@@ -175,13 +175,14 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .option('--no-launch', 'write the session and print the command, but do not open it')
     .option('--app', 'open it in the desktop app (Claude Desktop, Codex Desktop) instead of the terminal')
     .option('--summarize', 'ask the tool being left for a short summary and add it to the brief')
-    .action(async (to: string, opts: { from?: string; session?: string; launch: boolean; app?: boolean; summarize?: boolean }) => {
+    .option('--lean', 'start from the brief alone, with the conversation in a file it points to (fewer tokens)')
+    .action(async (to: string, opts: { from?: string; session?: string; launch: boolean; app?: boolean; summarize?: boolean; lean?: boolean }) => {
       if (opts.session && !opts.from) throw new Error('--session needs --from');
       const c = ctx();
       adapter(c, to);
       const from = { tool: opts.from, session: opts.session };
       const summary = opts.summarize ? await askSummary(c, (await sync(c, from)).active, parseKey(to).tool) : undefined;
-      const result = await switchTo(c, to, { ...from, summary });
+      const result = await switchTo(c, to, { ...from, summary, lean: opts.lean });
       report(result, to);
       await run(c, result.ref, opts);
     });
@@ -209,9 +210,10 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
     .command('next')
     .description('If the session in use hit its usage limit, move it to the next account or tool with room')
     .option('--force', 'move it even if it is not limited')
+    .option('--lean', 'start from the brief alone, with the conversation in a file it points to')
     .option('--no-launch', 'write the session and print the command, but do not open it')
     .option('--app', 'open it in the desktop app instead of the terminal')
-    .action(async (opts: { force?: boolean; launch: boolean; app?: boolean }) => {
+    .action(async (opts: { force?: boolean; launch: boolean; app?: boolean; lean?: boolean }) => {
       const c = ctx();
       const { active } = await sync(c);
       if (!active) throw new Error(`no Claude Code, Codex or opencode session found for ${c.cwd}`);
@@ -228,7 +230,12 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
       if (!pick.target) {
         throw new Error('no other account or tool has room; add one (wormhole accounts add) or wait for the reset');
       }
-      const result = await switchTo(c, pick.target, { tool: key, session: active.nativeId, ...(limit.limited ? { limit } : {}) });
+      const result = await switchTo(c, pick.target, {
+        tool: key,
+        session: active.nativeId,
+        lean: opts.lean,
+        ...(limit.limited ? { limit } : {}),
+      });
       report(result, pick.target);
       await run(c, result.ref, opts);
     });
@@ -424,7 +431,7 @@ function buildProgram(deps: Deps, argv: string[], state: { exitCode: number }): 
   return program;
 }
 
-function report({ ref, mode, from, base }: SwitchResult, to: string) {
+function report({ ref, mode, from, base, transcript }: SwitchResult, to: string) {
   if (mode === 'resumed') {
     console.log(`${to} already holds the active session ${ref.nativeId}; resuming it.`);
     return;
@@ -433,7 +440,9 @@ function report({ ref, mode, from, base }: SwitchResult, to: string) {
   console.log(
     mode === 'extended'
       ? `  continues a copy of ${refKey(base!)} ${base!.nativeId} with only the newer turns added`
-      : '  new session holding the whole thread',
+      : mode === 'lean'
+        ? `  new session holding only the brief; the conversation is in ${transcript}`
+        : '  new session holding the whole thread',
   );
 }
 

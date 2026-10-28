@@ -1,4 +1,4 @@
-import { appendFile, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -170,6 +170,38 @@ describe('switchTo', () => {
         { kind: 'user_text', text: 'theirs', src: 'codex:b' },
       ]),
     ).toEqual([{ kind: 'user_text', text: 'theirs', src: 'codex:b' }]);
+  });
+
+  it('--lean starts from the brief alone and points at the whole conversation', async () => {
+    await claudeSession('c1', [
+      user('build the parser'),
+      reply('Parser done.'),
+      user('rename the lexer module'),
+      reply('Renamed.'),
+      user('now add tests'),
+      reply('Tests added.'),
+    ]);
+
+    const r = await switchTo(c, 'codex', { lean: true });
+    expect(r.mode).toBe('lean');
+    const rollout = await text(r.ref.path);
+    expect(rollout).toContain('was not copied');
+    expect(rollout).toContain(JSON.stringify(r.transcript).slice(1, -1));
+    expect(rollout).toContain('Tests added.'); // the last reply, in the brief
+    expect(rollout).not.toContain('rename the lexer module');
+    expect(rollout).not.toContain('Lines like');
+
+    const md = await text(r.transcript!);
+    for (const s of ['## User', 'build the parser', 'rename the lexer module', 'Renamed.', 'Tests added.']) {
+      expect(md).toContain(s);
+    }
+    if (process.platform !== 'win32') expect((await stat(r.transcript!)).mode & 0o777).toBe(0o600);
+
+    // Lean does not extend: going back lean to Claude is a fresh session too.
+    await later(r.ref.path, 5);
+    const back = await switchTo(c, 'claude', { lean: true });
+    expect(back.mode).toBe('lean');
+    expect(back.ref.nativeId).not.toBe('c1');
   });
 
   it('resumes in place when the target already holds the active session', async () => {

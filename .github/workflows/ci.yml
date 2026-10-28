@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      all_os:
+        description: Also run on Windows and macOS
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -13,8 +19,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # macos-latest runs on Apple silicon (M-series).
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Linux only on push and PR while the repo is private (Windows and macOS runners use paid
+        # minutes several times faster). Run the workflow by hand for all three; macos-latest is
+        # Apple silicon (M-series).
+        os: ${{ fromJSON(inputs.all_os && '["ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

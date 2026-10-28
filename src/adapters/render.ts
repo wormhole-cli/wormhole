@@ -94,6 +94,14 @@ export function toTurns(
   return turns;
 }
 
+/** The thread as Markdown: one heading per turn, tool calls as "▸" lines. */
+export function toMarkdown(events: Event[], title: string): string {
+  const turns = toTurns(events);
+  const out = [`# ${title}`, '', 'Conversation kept by wormhole.', ''];
+  for (const t of turns) out.push(`## ${t.role === 'user' ? 'User' : 'Assistant'}`, '', t.text, '');
+  return out.join('\n');
+}
+
 /** Tells the target model where the uncut text is; `artifact` is an absolute path by now. */
 function pointer(what: 'input' | 'output', artifact: string | undefined): string {
   return artifact ? ` (full ${what}: ${artifact})` : '';

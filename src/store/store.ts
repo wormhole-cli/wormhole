@@ -135,6 +135,13 @@ export class Store {
     return name;
   }
 
+  /** Saves the whole thread as readable text, for sessions that start from the brief alone. */
+  async writeTranscript(id: string, text: string): Promise<string> {
+    const file = path.join(this.threadDir(id), 'transcript.md');
+    await atomicWrite(file, text, 0o600);
+    return file;
+  }
+
   artifactPath(id: string, name: string): string {
     return path.join(this.threadDir(id), 'artifacts', name);
   }

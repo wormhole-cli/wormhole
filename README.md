@@ -82,6 +82,13 @@ Codex runs `codex exec resume` against a copy of the rollout in a throwaway `COD
 runs `opencode run --session <id> --fork` and the fork is deleted afterwards. If the call fails or
 takes over 120 s, wormhole warns on stderr and uses the plain brief.
 
+`switch --lean` (and `next --lean`) saves tokens on long sessions. Normally the tool you switch to
+loads the whole conversation as its history, so every later turn pays for it. With `--lean` the new
+session holds only the brief, and the whole conversation is written to
+`~/.wormhole/threads/<id>/transcript.md` (owner-only), which the brief points to so the agent can read
+the parts it needs. It pairs well with `--summarize`. A lean switch always starts a new session: it
+never extends the target's earlier one.
+
 ### Checking the setup
 
 `wormhole doctor` prints one pass/WARN/FAIL line per check, with a fix after `→` on each problem, and

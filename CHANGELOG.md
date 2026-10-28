@@ -5,6 +5,13 @@ and versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `switch --lean` and `next --lean`: start the next tool from the brief alone, with the whole
+  conversation in `transcript.md` for it to read when needed, so long sessions cost fewer tokens.
+
+### Changed
+- CI runs on Linux only for pushes and pull requests; run it by hand for Windows and macOS too.
+
 ## [0.1.0] - unreleased
 
 First release.

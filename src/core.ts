@@ -3,7 +3,7 @@ import { type Account, keyOf, loadAccounts, parseKey } from './accounts.js';
 import { ClaudeAdapter } from './adapters/claude.js';
 import { CodexAdapter } from './adapters/codex.js';
 import { OpencodeAdapter } from './adapters/opencode.js';
-import { KEEP_MAX, keep } from './adapters/render.js';
+import { KEEP_MAX, keep, toMarkdown } from './adapters/render.js';
 import type { NativeRef, ToolAdapter } from './adapters/types.js';
 import { type BriefInput, buildBrief } from './handoff/brief.js';
 import { type GitInfo, gitInfo } from './handoff/git.js';
@@ -159,10 +159,12 @@ export async function makeBrief(
   git?: GitInfo | null,
   continuing = false,
   summary?: BriefInput['summary'],
+  transcript?: string,
 ): Promise<string> {
   const events = await ctx.store.readEvents(thread.id);
   const from = thread.segments.map((s) => s.tool).filter((t) => t !== to);
-  return buildBrief({ events, from, to, git: git === undefined ? await gitInfo(ctx.cwd) : git, continuing, summary });
+  const g = git === undefined ? await gitInfo(ctx.cwd) : git;
+  return buildBrief({ events, from, to, git: g, continuing, summary, transcript });
 }
 
 export interface SwitchOptions extends SyncOptions {
@@ -170,6 +172,8 @@ export interface SwitchOptions extends SyncOptions {
   summary?: BriefInput['summary'];
   /** The session being left hit this limit: recorded on the thread as its fallback. */
   limit?: LimitStatus;
+  /** Start a new session from the brief alone; the conversation goes to a transcript file. */
+  lean?: boolean;
 }
 
 export interface SwitchResult {
@@ -178,11 +182,14 @@ export interface SwitchResult {
    * resumed: the target already held the active session, nothing written.
    * extended: a copy of the target's last session with only the other tools' turns added.
    * synthesized: a new session holding the whole thread.
+   * lean: a new session holding only the brief, which points at `transcript`.
    */
-  mode: 'resumed' | 'extended' | 'synthesized';
+  mode: 'resumed' | 'extended' | 'synthesized' | 'lean';
   from: NativeRef | null;
   /** For extended: the session that was copied. */
   base?: NativeRef;
+  /** For lean: the file with the whole conversation. */
+  transcript?: string;
 }
 
 /**
@@ -216,17 +223,21 @@ async function switchUnlocked(ctx: Context, to: string, opts: SwitchOptions, hom
 
   const events = withArtifactPaths(home, thread.id, await ctx.store.readEvents(thread.id));
   // The tool's latest session, whichever account it is in: the target account gets a copy.
-  const last = thread.segments.findLast((s) => s.tool === tool && ctx.adapters[refKey(s)]);
+  const last = opts.lean ? undefined : thread.segments.findLast((s) => s.tool === tool && ctx.adapters[refKey(s)]);
   const delta = last ? missingFrom(last, events) : null;
   const base = last && delta ? ((await adapter(ctx, refKey(last)).locate(ctx.cwd, last.nativeId)) ?? undefined) : undefined;
 
   const git = await gitInfo(ctx.cwd);
+  const transcript = opts.lean ? await home.writeTranscript(thread.id, toMarkdown(events, thread.title)) : undefined;
   // Only another account of the same tool is being left: a plain copy needs no handoff note.
   const brief =
-    base && delta?.length === 0 ? undefined : await makeBrief(ctx, thread, tool, git, base !== undefined, opts.summary);
+    base && delta?.length === 0
+      ? undefined
+      : await makeBrief(ctx, thread, tool, git, base !== undefined, opts.summary, transcript);
   const wctx = { cwd: ctx.cwd, gitBranch: git?.branch, brief };
-  const ref = base && delta ? await target.extend(base, delta, wctx) : await target.write(events, wctx);
-  const mode = base ? 'extended' : 'synthesized';
+  const ref =
+    base && delta ? await target.extend(base, delta, wctx) : await target.write(transcript ? [] : events, wctx);
+  const mode = transcript ? 'lean' : base ? 'extended' : 'synthesized';
 
   const offset = ref.offset ?? (await fs.stat(ref.path)).size;
   thread.segments.push({
@@ -250,5 +261,11 @@ async function switchUnlocked(ctx: Context, to: string, opts: SwitchOptions, hom
     offset,
   };
   await ctx.store.save(thread);
-  return { ref: tagged(ref, target), mode, from: active, base: base && tagged(base, adapter(ctx, refKey(last!))) };
+  return {
+    ref: tagged(ref, target),
+    mode,
+    from: active,
+    base: base && tagged(base, adapter(ctx, refKey(last!))),
+    ...(transcript ? { transcript } : {}),
+  };
 }
