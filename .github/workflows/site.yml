@@ -1,0 +1,29 @@
+name: Site
+
+# The site is served from wormhole-cli/wormhole-cli.github.io, whose pages.yml publishes site/ from
+# this repo. A push here that touches site/ asks that workflow to run. GITHUB_TOKEN cannot start
+# workflows in another repo, so this needs the PAGES_DISPATCH_TOKEN secret: a fine-grained token
+# with Actions read and write on wormhole-cli/wormhole-cli.github.io only. Without it the job is
+# skipped and the site can be published by hand:
+# gh workflow run pages.yml -R wormhole-cli/wormhole-cli.github.io
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.PAGES_DISPATCH_TOKEN }}
+    steps:
+      - name: Start the Pages workflow
+        if: env.GH_TOKEN != ''
+        run: gh workflow run pages.yml -R wormhole-cli/wormhole-cli.github.io
+      - name: No token
+        if: env.GH_TOKEN == ''
+        run: echo "::warning::PAGES_DISPATCH_TOKEN is not set, so the site was not republished. Run pages.yml in wormhole-cli/wormhole-cli.github.io by hand."
